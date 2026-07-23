@@ -778,7 +778,7 @@ function buildDraftsFromStructuredJson(json) {
   return drafts;
 }
 
-
+function renderDraftList() {
   const wrap = $("#import-summary");
   const list = $("#draft-list");
   if (!draftEntries.length) {
