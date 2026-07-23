@@ -116,7 +116,7 @@ service cloud.firestore {
 ## 檔案結構
 
 ```
-health-journal/
+Health-1F/
 ├── index.html          # 主頁面結構
 ├── css/style.css        # 樣式（Apple Health 風格設計系統）
 ├── js/
