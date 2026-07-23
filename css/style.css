@@ -27,6 +27,12 @@
   --c-note: #64748B;      /* 其他/備註 */
   --c-note-bg: #EEF1F4;
 
+  /* Family member accents */
+  --c-mother: #FF2D55;
+  --c-mother-bg: #FFE5EB;
+  --c-father: #007AFF;
+  --c-father-bg: #E8F2FF;
+
   /* Status */
   --status-active: #FF9500;    /* 治療中 */
   --status-active-bg: #FFF3E1;
@@ -251,6 +257,9 @@ button.ghost {
 .chip[data-cat="med"].active { background: var(--c-med); }
 .chip[data-cat="note"].active { background: var(--c-note); }
 .chip[data-status].active { background: var(--text-primary); }
+.chip[data-person="mother"].active { background: var(--c-mother); }
+.chip[data-person="father"].active { background: var(--c-father); }
+.chip[data-person="other"].active { background: var(--c-note); }
 .chip .dot { width: 7px; height: 7px; border-radius: 50%; }
 
 /* ==========================================================================
@@ -298,6 +307,10 @@ button.ghost {
 .status-pill.tracking { background: var(--status-tracking-bg); color: var(--status-tracking); }
 .status-pill.done { background: var(--status-done-bg); color: var(--status-done); }
 .check-mark { color: var(--status-done); font-weight: 900; }
+.person-pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+.person-pill.mother { background: var(--c-mother-bg); color: var(--c-mother); }
+.person-pill.father { background: var(--c-father-bg); color: var(--c-father); }
+.person-pill.other { background: var(--c-note-bg); color: var(--c-note); }
 .attach-badge { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-tertiary); }
 
 /* List (table) view */
@@ -363,6 +376,9 @@ button.ghost {
 .cat-select button[data-cat="exam"].active { background: var(--c-exam); }
 .cat-select button[data-cat="med"].active { background: var(--c-med); }
 .cat-select button[data-cat="note"].active { background: var(--c-note); }
+.cat-select button[data-person="mother"].active { background: var(--c-mother); }
+.cat-select button[data-person="father"].active { background: var(--c-father); }
+.cat-select button[data-person="other"].active { background: var(--c-note); }
 
 .status-select { display: flex; gap: 8px; }
 .status-select button { flex: 1; border: 1.5px solid var(--divider); background: var(--bg-elevated); padding: 9px; border-radius: var(--radius-sm); font-size: 12.5px; font-weight: 700; cursor: pointer; color: var(--text-secondary); }
