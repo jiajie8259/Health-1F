@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>健康記事</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<!-- ============================== 鎖定畫面 ============================== -->
+<div id="lock-screen">
+  <div class="lock-card">
+    <div class="lock-ring">🩺</div>
+    <h1 id="lock-title">設定密碼</h1>
+    <p id="lock-sub">第一次使用，請設定一組全家共用的密碼</p>
+    <input type="password" id="lock-input" placeholder="輸入密碼" autocomplete="off" />
+    <input type="password" id="lock-input-confirm" placeholder="再輸入一次" style="display:none" autocomplete="off" />
+    <button class="primary" id="lock-submit">設定密碼並進入</button>
+    <div class="lock-error" id="lock-error"></div>
+    <div class="lock-hint">密碼僅用於避免外人隨意瀏覽，雜湊值會存在你的 Firebase 專案中，並非高強度加密，請勿記錄過度敏感資料。</div>
+  </div>
+</div>
+
+<!-- ============================== App Shell ============================== -->
+<div id="app-shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">健</div>
+      <div>
+        <div class="brand-text">健康記事</div>
+        <div class="brand-sub">家人健康紀錄</div>
+      </div>
+    </div>
+    <nav class="nav-group" id="sidebar-nav">
+      <div class="nav-item active" data-route="timeline">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v4M16 3v4M4 9h16M5 6h14a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>
+        時間軸
+      </div>
+      <div class="nav-item" data-route="import">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        匯入 GPT 對話
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-chip">
+        <div class="user-avatar" id="user-avatar">?</div>
+        <div>
+          <div class="user-name" id="user-name-label">訪客</div>
+          <div class="user-sub-action" id="lock-app-btn">鎖定畫面</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- ---------- Timeline / List page ---------- -->
+    <section id="page-timeline">
+      <div class="topbar">
+        <div>
+          <div class="page-title">時間軸</div>
+          <div class="page-sub" id="record-count-sub">尚無紀錄</div>
+        </div>
+        <div class="search-wrap">
+          <span class="icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          </span>
+          <input type="text" id="search-input" placeholder="搜尋症狀、藥物、關鍵字…" />
+        </div>
+      </div>
+
+      <div class="rings-card">
+        <svg class="rings-svg" id="rings-svg" viewBox="0 0 100 100"></svg>
+        <div class="rings-legend">
+          <div class="ring-stat">
+            <span class="ring-dot" style="background:var(--status-active)"></span>
+            <div><div class="ring-stat-num" id="count-active">0</div><div class="ring-stat-label">治療中</div></div>
+          </div>
+          <div class="ring-stat">
+            <span class="ring-dot" style="background:var(--status-tracking)"></span>
+            <div><div class="ring-stat-num" id="count-tracking">0</div><div class="ring-stat-label">追蹤中</div></div>
+          </div>
+          <div class="ring-stat">
+            <span class="ring-dot" style="background:var(--status-done)"></span>
+            <div><div class="ring-stat-num" id="count-done">0</div><div class="ring-stat-label">已完成</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="controls-row">
+        <div class="view-toggle">
+          <button data-view="timeline" class="active">時間軸</button>
+          <button data-view="list">清單</button>
+        </div>
+      </div>
+
+      <div class="chip-row" id="category-chips">
+        <div class="chip" data-cat="symptom"><span class="dot" style="background:var(--c-symptom)"></span>症狀</div>
+        <div class="chip" data-cat="visit"><span class="dot" style="background:var(--c-visit)"></span>就診</div>
+        <div class="chip" data-cat="exam"><span class="dot" style="background:var(--c-exam)"></span>檢查</div>
+        <div class="chip" data-cat="med"><span class="dot" style="background:var(--c-med)"></span>用藥</div>
+        <div class="chip" data-cat="note"><span class="dot" style="background:var(--c-note)"></span>備註</div>
+      </div>
+      <div class="chip-row" id="status-chips">
+        <div class="chip" data-status="active"><span class="dot" style="background:var(--status-active)"></span>治療中</div>
+        <div class="chip" data-status="tracking"><span class="dot" style="background:var(--status-tracking)"></span>追蹤中</div>
+        <div class="chip" data-status="done"><span class="dot" style="background:var(--status-done)"></span>已完成</div>
+      </div>
+
+      <div id="timeline-view"></div>
+      <div id="list-view" style="display:none"></div>
+    </section>
+
+    <!-- ---------- Import page ---------- -->
+    <section id="page-import" style="display:none">
+      <div class="topbar">
+        <div>
+          <div class="page-title">匯入 GPT 對話</div>
+          <div class="page-sub">貼上或上傳 ChatGPT 匯出的對話，系統會嘗試整理成紀錄草稿</div>
+        </div>
+      </div>
+
+      <div class="import-panel">
+        <h3>1. 提供對話內容</h3>
+        <p class="desc">可上傳 ChatGPT 匯出的 conversations.json（設定 → 資料控制 → 匯出資料），或直接貼上對話文字。系統只會在瀏覽器內解析，不會上傳到任何第三方伺服器。</p>
+        <div class="dropzone" id="dropzone">
+          📄 拖曳 JSON 檔案到這裡，或點擊選擇檔案
+          <input type="file" id="file-input" accept=".json,.txt" style="display:none" />
+        </div>
+        <textarea class="import-textarea" id="import-textarea" placeholder="…或將對話文字貼在這裡"></textarea>
+        <div style="margin-top:12px; display:flex; gap:10px;">
+          <button class="primary" id="parse-btn">解析對話</button>
+          <button class="secondary" id="clear-import-btn">清除</button>
+        </div>
+        <div class="privacy-note">⚠️ 系統會自動偵測並遮蔽疑似身分證字號 / 電話號碼等格式，但仍請在儲存前逐筆確認內容，避免記錄不必要的敏感資料。</div>
+      </div>
+
+      <div id="import-summary" class="import-panel" style="display:none">
+        <h3 id="import-summary-title">解析結果</h3>
+        <p class="desc" id="import-summary-desc"></p>
+        <div style="display:flex; gap:10px;">
+          <button class="primary" id="save-drafts-btn">儲存已勾選的紀錄</button>
+          <button class="secondary" id="select-all-btn">全選 / 全不選</button>
+        </div>
+        <div class="draft-list" id="draft-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <button class="fab" id="fab-add" title="新增紀錄">＋</button>
+
+  <nav class="bottom-nav">
+    <div class="nav-item active" data-route="timeline">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v4M16 3v4M4 9h16M5 6h14a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>
+      時間軸
+    </div>
+    <div class="nav-item" data-route="import">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+      匯入
+    </div>
+  </nav>
+</div>
+
+<!-- ============================== Add / Edit Modal ============================== -->
+<div class="modal-overlay" id="record-modal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 id="modal-title">新增紀錄</h2>
+      <button class="modal-close" id="modal-close-btn">✕</button>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label>日期</label>
+        <input type="date" id="f-date" />
+      </div>
+      <div class="field">
+        <label>時間（選填）</label>
+        <input type="time" id="f-time" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label>分類</label>
+      <div class="cat-select" id="f-category">
+        <button data-cat="symptom" type="button">🔴 症狀</button>
+        <button data-cat="visit" type="button">🟠 就診</button>
+        <button data-cat="exam" type="button">🔵 檢查</button>
+        <button data-cat="med" type="button">🟣 用藥</button>
+        <button data-cat="note" type="button">⚪ 備註</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>標題</label>
+      <input type="text" id="f-title" placeholder="例如：右膝疼痛、心臟內科回診" />
+    </div>
+
+    <div class="field">
+      <label>詳細描述</label>
+      <textarea id="f-desc" placeholder="症狀描述、醫生囑咐、檢查結果…"></textarea>
+      <div class="field-hint">請避免輸入身分證字號、健保卡號等識別資料；系統會於儲存前自動遮蔽偵測到的格式。</div>
+    </div>
+
+    <div class="field">
+      <label>標籤（用逗號分隔）</label>
+      <input type="text" id="f-tags" placeholder="例如：膝蓋, 骨科, 復健" />
+    </div>
+
+    <div class="field">
+      <label>狀態</label>
+      <div class="status-select" id="f-status">
+        <button data-status="active" type="button">治療中</button>
+        <button data-status="tracking" type="button">追蹤中</button>
+        <button data-status="done" type="button">✓ 已完成</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>附件（PDF / 照片 / 報告）</label>
+      <div class="upload-btn" id="upload-btn">
+        📎 選擇檔案上傳
+        <input type="file" id="attach-input" style="display:none" multiple accept="image/*,application/pdf" />
+      </div>
+      <span class="upload-progress" id="upload-progress"></span>
+      <div class="attach-list" id="attach-list"></div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="danger-link" id="delete-record-btn" style="display:none">刪除這筆紀錄</button>
+      <div class="right">
+        <button class="secondary" id="cancel-record-btn">取消</button>
+        <button class="primary" id="save-record-btn">儲存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

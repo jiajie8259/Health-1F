@@ -1,1 +1,126 @@
-# Health-1F
+# 健康記事（家人健康紀錄）
+
+Apple Health 風格的家庭健康紀錄網站。時間軸／清單雙模式、全站搜尋、標籤與治療狀態、附件上傳、GPT 對話匯入。純前端 + Firebase，可直接部署在 GitHub Pages。
+
+---
+
+## 這一版做了什麼、還沒做什麼
+
+**已完成（核心功能 + GPT 匯入）**
+- 時間軸 / 清單雙模式切換
+- 新增、編輯、刪除紀錄（分類、標籤、治療中／追蹤中／已完成狀態）
+- 全站即時搜尋
+- 附件上傳（PDF／照片／報告）→ 壓縮後以 base64 存進 **Firestore**（不是 GitHub 倉庫、也不是 Firebase Storage，原因見下方），完全在免費 Spark 方案內，不需要信用卡
+- GPT 對話匯入頁：可貼上文字，或上傳 ChatGPT 匯出的 `conversations.json`，自動解析成候選紀錄，逐筆確認後再匯入
+- 敏感資料自動遮蔽：偵測到疑似身分證字號、電話號碼格式時，會自動用 █ 遮蔽
+- 簡單密碼保護（家人共用一組密碼）
+
+**這版還沒做（下一階段可以再幫你加）**
+- 一鍵匯出成 PDF／JSON 備份
+- 紀錄之間的「關聯」標記（例如同一症狀的多次回診串在一起）
+- 真正的帳號系統（目前是「一組密碼＋瀏覽器記住的名字」，不是每個人獨立登入）
+
+---
+
+## 為什麼附件是存進 Firestore，不是 GitHub 倉庫、也不是 Firebase Storage？
+
+**不用 GitHub 倉庫**：GitHub Pages 是純靜態網站，網頁要「寫入」GitHub 倉庫必須帶著一組 GitHub API Token 一起送出請求。這組 Token 只能寫在前端程式碼裡，代表任何人打開瀏覽器開發者工具都看得到，並能拿去改你的倉庫。對健康相關檔案來說這風險太高。
+
+**不用 Firebase Storage**：原本這是最直覺的做法，但 Google 從 **2026 年 2 月 3 日起**規定，只要使用 Cloud Storage for Firebase，專案就必須升級到 **Blaze 付費方案**（需連結一組有效的信用卡），即使實際用量是 0 元也一樣，Spark 免費方案完全無法使用 Storage。既然你想維持免費帳號，這條路就不能走了。
+
+**改用 Firestore 存 base64**：附件在瀏覽器端先壓縮（照片會自動縮小、降畫質），轉成 base64 文字後，當成一筆獨立的 Firestore 文件存起來，跟記錄本身用 `recordId` 關聯。Firestore 的 Spark 免費額度（1GB 儲存空間、每天 5 萬次讀取、2 萬次寫入）完全不用信用卡就能用，對家庭用量來說很充裕。
+
+**代價**：
+- 單一附件上限約 700KB（壓縮後），超過會提示你先壓縮再上傳
+- 大量高解析度照片會比較快用完 1GB 額度（不過一般家庭使用要存好幾千張才會滿）
+- PDF 檔案沒辦法自動壓縮，如果原始檔太大，需要自行用其他工具（例如手機內建的「檔案」App 或線上壓縮工具）先縮小再上傳
+
+---
+
+## 關於「密碼保護」的真實安全等級（請務必閱讀）
+
+這個 App 沒有使用 Firebase Authentication（帳號登入），而是用一組「全家共用密碼」，密碼的雜湊值存在 Firestore 的 `settings/access` 文件裡，網頁核對雜湊後才顯示內容。
+
+這種做法可以：
+- ✅ 擋住不小心點到網址、隨手滑到的外人
+- ✅ 不用管理多組帳號，家人共用一組密碼即可
+
+**沒辦法**：
+- ❌ 擋住刻意想繞過的人 —— 因為 Firebase 專案的設定（apiKey 等）本來就會出現在前端程式碼裡，這是所有純前端 + Firebase 網站的共同限制。只要有心人拿到這組設定，就有機會繞過網頁介面直接呼叫 Firestore。
+
+所以這是「避免家人以外的人不小心看到」等級的保護，**不建議記錄身分證字號、健保卡號等高度敏感資料**（App 也會自動幫忙遮蔽偵測到的格式）。如果未來想要更高等級的保護（例如每人獨立帳號登入），可以再升級成 Firebase Authentication，屆時我可以幫你調整。
+
+---
+
+## 建置步驟
+
+### 1. 建立 Firebase 專案（不需要信用卡，Spark 免費方案即可）
+1. 前往 [Firebase Console](https://console.firebase.google.com/)，建立新專案
+2. 左側選單 → **Firestore Database** → 建立資料庫（正式環境模式即可，規則下面會提供）——**不需要**建立 Storage
+3. 左側選單 → 專案設定（齒輪圖示）→ 一般 → 往下滑到「你的應用程式」→ 新增網頁應用程式
+4. 複製產生的設定物件，貼到 `js/firebase-config.js` 裡的 `firebaseConfig`
+
+### 2. 設定 Firestore 安全規則
+Firestore → 規則，貼上：
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /records/{recordId} {
+      allow read, write: if true;
+    }
+    match /attachments/{attachmentId} {
+      allow read, write: if true;
+    }
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if !exists(/databases/$(database)/documents/settings/$(docId));
+      // 密碼只能在第一次「尚未設定」時寫入，之後透過網頁的密碼比對邏輯更新
+    }
+  }
+}
+```
+
+> 這組規則刻意只開放 `records`、`attachments`、`settings` 三個集合，不是整個資料庫全開，降低風險範圍。
+
+### 3. 部署到 GitHub Pages
+1. 在 GitHub 建立新的 repository（可設定為 Private，多一層保護）
+2. 把 `health-journal` 資料夾內所有檔案上傳（`index.html`、`css/`、`js/`）
+3. Repository → Settings → Pages → Source 選擇要發布的分支（例如 `main`）與資料夾（`/root`）
+4. 存起來後，GitHub 會給一個網址，例如 `https://你的帳號.github.io/倉庫名稱/`
+5. 打開網址，第一次會要求「設定密碼」，設定完成後全家用同一組密碼登入即可
+
+### 4. 首次使用
+- 第一次進入會請你「設定密碼」（全家共用）
+- 進入後會請你輸入「稱呼」（存在自己瀏覽器的 localStorage，用來標記是誰新增的紀錄，每個人在自己的裝置上輸入一次即可）
+- 側邊欄「鎖定畫面」可以隨時登出目前裝置
+
+---
+
+## GPT 對話匯入怎麼用
+
+1. 到 ChatGPT 網頁版 → 設定 → 資料控制 → 匯出資料，會收到一封信附上下載連結，解壓縮後有一個 `conversations.json`
+2. 到「匯入 GPT 對話」頁面，把整個檔案拖進去，或打開檔案後把內容貼進文字框
+3. 按「解析對話」——系統會用關鍵字（症狀、看診、檢查、用藥相關字詞）掃過所有你（user）發出的訊息，挑出看起來跟健康有關的段落，整理成候選紀錄卡片
+4. 每張卡片都可以：勾選要不要匯入、調整日期／分類／狀態／標籤
+5. 確認沒問題後按「儲存已勾選的紀錄」
+
+**注意事項**：這是關鍵字比對，不是真的 AI 語意理解，所以：
+- 可能會漏掉沒有包含關鍵字、但其實是健康相關的內容
+- 也可能誤判一些無關內容
+- 系統只是幫你「先篩一輪、省打字」，**請務必逐筆檢查再匯入**，尤其是自動遮蔽敏感資料的部分，遮蔽規則是簡單的格式比對（例如身分證字號格式），不保證 100% 抓到所有敏感內容
+
+---
+
+## 檔案結構
+
+```
+health-journal/
+├── index.html          # 主頁面結構
+├── css/style.css        # 樣式（Apple Health 風格設計系統）
+├── js/
+│   ├── firebase-config.js   # ← 你的 Firebase 設定要填在這裡
+│   └── app.js                # 主程式邏輯
+└── README.md
+```
