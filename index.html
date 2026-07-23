@@ -94,6 +94,11 @@
         </div>
       </div>
 
+      <div class="chip-row" id="person-chips">
+        <div class="chip" data-person="mother"><span class="dot" style="background:var(--c-mother)"></span>媽媽</div>
+        <div class="chip" data-person="father"><span class="dot" style="background:var(--c-father)"></span>爸爸</div>
+        <div class="chip" data-person="other"><span class="dot" style="background:var(--c-note)"></span>其他</div>
+      </div>
       <div class="chip-row" id="category-chips">
         <div class="chip" data-cat="symptom"><span class="dot" style="background:var(--c-symptom)"></span>症狀</div>
         <div class="chip" data-cat="visit"><span class="dot" style="background:var(--c-visit)"></span>就診</div>
@@ -167,6 +172,15 @@
     <div class="modal-head">
       <h2 id="modal-title">新增紀錄</h2>
       <button class="modal-close" id="modal-close-btn">✕</button>
+    </div>
+
+    <div class="field">
+      <label>家人</label>
+      <div class="cat-select" id="f-person">
+        <button data-person="mother" type="button">媽媽</button>
+        <button data-person="father" type="button">爸爸</button>
+        <button data-person="other" type="button">其他</button>
+      </div>
     </div>
 
     <div class="field-row">
