@@ -20,6 +20,7 @@ const db = getFirestore(app);
 const CATEGORY_LABELS = { symptom: "症狀", visit: "就診", exam: "檢查", med: "用藥", note: "備註" };
 const CATEGORY_ICONS = { symptom: "🩹", visit: "🏥", exam: "🔬", med: "💊", note: "📝" };
 const STATUS_LABELS = { active: "治療中", tracking: "追蹤中", done: "已完成" };
+const PERSON_LABELS = { mother: "媽媽", father: "爸爸", other: "其他" };
 const ATTACH_MAX_BYTES = 700 * 1024; // 單一附件上限（base64 編碼後），確保單一 Firestore 文件不超過大小限制
 const ATTACHMENTS_COLLECTION = "attachments";
 
@@ -166,6 +167,7 @@ let allRecords = [];
 let currentView = "timeline";
 let activeCategoryFilters = new Set();
 let activeStatusFilters = new Set();
+let activePersonFilters = new Set();
 let searchTerm = "";
 
 function startRecordsListener() {
@@ -183,8 +185,9 @@ function filteredRecords() {
   return allRecords.filter(r => {
     if (activeCategoryFilters.size && !activeCategoryFilters.has(r.category)) return false;
     if (activeStatusFilters.size && !activeStatusFilters.has(r.status)) return false;
+    if (activePersonFilters.size && !activePersonFilters.has(r.person || "other")) return false;
     if (searchTerm) {
-      const hay = [r.title, r.description, (r.tags || []).join(" "), CATEGORY_LABELS[r.category]].join(" ").toLowerCase();
+      const hay = [r.title, r.description, (r.tags || []).join(" "), CATEGORY_LABELS[r.category], PERSON_LABELS[r.person]].join(" ").toLowerCase();
       if (!hay.includes(searchTerm.toLowerCase())) return false;
     }
     return true;
@@ -270,6 +273,7 @@ function cardHtml(r) {
         </div>
         ${r.description ? `<div class="record-desc">${escapeHtml(r.description)}</div>` : ""}
         <div class="record-meta">
+          <span class="person-pill ${r.person || "other"}">${PERSON_LABELS[r.person] || "其他"}</span>
           <span class="status-pill ${r.status}">${r.status === "done" ? '<span class="check-mark">✓</span>' : ""}${STATUS_LABELS[r.status] || ""}</span>
           ${tags}
           ${attachCount ? `<span class="attach-badge">📎 ${attachCount}</span>` : ""}
@@ -291,10 +295,11 @@ function renderList() {
   if (!recs.length) { el.innerHTML = emptyStateHtml(); return; }
   el.innerHTML = `
     <table class="list-table">
-      <thead><tr><th>日期</th><th>分類</th><th>標題</th><th>狀態</th><th>標籤</th></tr></thead>
+      <thead><tr><th>家人</th><th>日期</th><th>分類</th><th>標題</th><th>狀態</th><th>標籤</th></tr></thead>
       <tbody>
         ${recs.map(r => `
           <tr data-id="${r.id}">
+            <td><span class="person-pill ${r.person || "other"}">${PERSON_LABELS[r.person] || "其他"}</span></td>
             <td>${r.date}${r.time ? " " + r.time : ""}</td>
             <td><span class="list-cat-dot" style="background:var(--c-${r.category})"></span>${CATEGORY_LABELS[r.category] || ""}</td>
             <td>${escapeHtml(r.title || "")}</td>
@@ -343,6 +348,14 @@ $$("#status-chips .chip").forEach(chip => {
     renderAll();
   });
 });
+$$("#person-chips .chip").forEach(chip => {
+  chip.addEventListener("click", () => {
+    const p = chip.dataset.person;
+    chip.classList.toggle("active");
+    if (activePersonFilters.has(p)) activePersonFilters.delete(p); else activePersonFilters.add(p);
+    renderAll();
+  });
+});
 $("#search-input").addEventListener("input", (e) => {
   searchTerm = e.target.value.trim();
   renderAll();
@@ -366,12 +379,14 @@ let editingId = null;
 let formAttachments = [];
 let formCategory = "symptom";
 let formStatus = "tracking";
+let formPerson = "mother";
 
 function openAddModal() {
   editingId = null;
   formAttachments = [];
   formCategory = "symptom";
   formStatus = "tracking";
+  formPerson = localStorage.getItem("hj_last_person") || "mother";
   $("#modal-title").textContent = "新增紀錄";
   $("#delete-record-btn").style.display = "none";
   $("#f-date").value = todayStr();
@@ -381,6 +396,7 @@ function openAddModal() {
   $("#f-tags").value = "";
   syncCategoryButtons();
   syncStatusButtons();
+  syncPersonButtons();
   renderAttachList();
   $("#record-modal").classList.add("active");
 }
@@ -392,6 +408,7 @@ async function openEditModal(id) {
   formAttachments = [];
   formCategory = r.category || "symptom";
   formStatus = r.status || "tracking";
+  formPerson = r.person || "mother";
   $("#modal-title").textContent = "編輯紀錄";
   $("#delete-record-btn").style.display = "inline-block";
   $("#f-date").value = r.date || todayStr();
@@ -401,6 +418,7 @@ async function openEditModal(id) {
   $("#f-tags").value = (r.tags || []).join(", ");
   syncCategoryButtons();
   syncStatusButtons();
+  syncPersonButtons();
   renderAttachList();
   $("#record-modal").classList.add("active");
 
@@ -425,8 +443,12 @@ function syncCategoryButtons() {
 function syncStatusButtons() {
   $$("#f-status button").forEach(b => b.classList.toggle("active", b.dataset.status === formStatus));
 }
+function syncPersonButtons() {
+  $$("#f-person button").forEach(b => b.classList.toggle("active", b.dataset.person === formPerson));
+}
 $$("#f-category button").forEach(b => b.addEventListener("click", () => { formCategory = b.dataset.cat; syncCategoryButtons(); }));
 $$("#f-status button").forEach(b => b.addEventListener("click", () => { formStatus = b.dataset.status; syncStatusButtons(); }));
+$$("#f-person button").forEach(b => b.addEventListener("click", () => { formPerson = b.dataset.person; localStorage.setItem("hj_last_person", formPerson); syncPersonButtons(); }));
 
 function fmtBytes(n) {
   if (!n) return "";
@@ -551,7 +573,7 @@ $("#save-record-btn").addEventListener("click", async () => {
 
   const payload = {
     date, time, title: safeTitle, description,
-    tags, category: formCategory, status: formStatus,
+    tags, category: formCategory, status: formStatus, person: formPerson,
     attachmentCount: formAttachments.length,
     createdBy: currentUser(),
     updatedAt: serverTimestamp()
@@ -662,7 +684,7 @@ function buildDraftsFromMessages(messages) {
     const fullText = reply ? `${m.text}\n\n（AI 回覆參考）\n${reply}` : m.text;
     const { text: safeText, hits } = redact(fullText);
     drafts.push({
-      date, category, status: "tracking",
+      date, category, status: "tracking", person: "other",
       title: m.text.slice(0, 24).replace(/\n/g, " "),
       description: safeText,
       tags: [],
@@ -681,7 +703,7 @@ function buildDraftsFromPlainText(text) {
     const date = guessDate(block, fallbackDate);
     const { text: safeText, hits } = redact(block);
     return {
-      date, category, status: "tracking",
+      date, category, status: "tracking", person: "other",
       title: block.slice(0, 24).replace(/\n/g, " "),
       description: safeText,
       tags: [],
@@ -691,7 +713,72 @@ function buildDraftsFromPlainText(text) {
   });
 }
 
-function renderDraftList() {
+// 將 "2026-04-01"／"2026-04"／"2026" 統一補成完整日期，並標記是否為概略日期
+function normalizeApproxDate(raw) {
+  if (!raw) return { date: todayStr(), approx: true };
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return { date: s, approx: false };
+  if (/^\d{4}-\d{2}$/.test(s)) return { date: `${s}-01`, approx: true };
+  if (/^\d{4}$/.test(s)) return { date: `${s}-01-01`, approx: true };
+  return { date: guessDate(s, todayStr()), approx: true };
+}
+
+// 偵測是否為「依家人分類」的結構化健康 JSON（例如 { people: { mother: {...}, father: {...} } }）
+function looksLikeStructuredHealthJson(json) {
+  return !!(json && typeof json === "object" && json.people && typeof json.people === "object");
+}
+
+function mapStructuredStatus(status) {
+  const map = { completed: "done", follow_up: "tracking", observation: "tracking", pending: "active" };
+  return map[status] || "tracking";
+}
+
+// 將結構化的個人時間軸（symptoms/medical_findings/treatment/...）組成可讀描述
+function buildStructuredDescription(entry, approxDate) {
+  const parts = [];
+  const pushList = (label, arr) => {
+    if (Array.isArray(arr) && arr.length) parts.push(`【${label}】\n` + arr.map(s => `・${s}`).join("\n"));
+  };
+  pushList("症狀", entry.symptoms);
+  pushList("檢查/診斷", entry.medical_findings);
+  pushList("治療方式", entry.treatment);
+  if (Array.isArray(entry.options) && entry.options.length) {
+    pushList("方案選項", entry.options.map(o => `${o.type || ""}${o.note ? "：" + o.note : ""}`));
+  }
+  pushList("相關病史", entry.history);
+  pushList("AI 分析參考（僅供參考，非診斷）", entry.gpt_analysis);
+  pushList("建議", entry.recommendation);
+  pushList("日常照護", entry.daily_care);
+  pushList("摘要", entry.summary);
+  pushList("補充說明", entry.gpt_summary);
+  if (approxDate) parts.unshift("（原始日期僅精確到月／年，請確認並視需要調整）");
+  return parts.join("\n\n");
+}
+
+function buildDraftsFromStructuredJson(json) {
+  const drafts = [];
+  Object.entries(json.people).forEach(([personKey, personData]) => {
+    const person = PERSON_LABELS[personKey] ? personKey : "other";
+    const timeline = Array.isArray(personData.timeline) ? personData.timeline : [];
+    timeline.forEach(entry => {
+      const { date, approx } = normalizeApproxDate(entry.date);
+      const combinedText = [entry.title, entry.category, ...(entry.symptoms || []), ...(entry.treatment || []), ...(entry.medical_findings || [])].join(" ");
+      const category = guessCategory(combinedText);
+      const status = mapStructuredStatus(entry.status);
+      const description = buildStructuredDescription(entry, approx);
+      const { text: safeDesc, hits } = redact(description);
+      const tags = entry.category ? [entry.category] : [];
+      drafts.push({
+        date, category, status, person,
+        title: (entry.title || entry.category || "健康紀錄").slice(0, 30),
+        description: safeDesc, tags, hits, include: true
+      });
+    });
+  });
+  return drafts;
+}
+
+
   const wrap = $("#import-summary");
   const list = $("#draft-list");
   if (!draftEntries.length) {
@@ -718,6 +805,9 @@ function renderDraftList() {
         ${d.hits ? '<span class="tag-pill" style="background:#FFE8CC;color:#7A4A00;">⚠ 已遮蔽敏感資料</span>' : ""}
       </div>
       <div class="draft-fields">
+        <select class="draft-person" data-i="${i}">
+          ${Object.keys(PERSON_LABELS).map(p => `<option value="${p}" ${p === (d.person || "other") ? "selected" : ""}>${PERSON_LABELS[p]}</option>`).join("")}
+        </select>
         <input type="date" class="draft-date" data-i="${i}" value="${d.date}" />
         <select class="draft-cat" data-i="${i}">
           ${Object.keys(CATEGORY_LABELS).map(c => `<option value="${c}" ${c === d.category ? "selected" : ""}>${CATEGORY_LABELS[c]}</option>`).join("")}
@@ -734,6 +824,9 @@ function renderDraftList() {
   list.querySelectorAll(".draft-include").forEach(cb => cb.addEventListener("change", () => {
     const i = Number(cb.dataset.i); draftEntries[i].include = cb.checked; renderDraftList();
   }));
+  list.querySelectorAll(".draft-person").forEach(sel => sel.addEventListener("change", () => {
+    draftEntries[Number(sel.dataset.i)].person = sel.value;
+  }));
   list.querySelectorAll(".draft-date").forEach(inp => inp.addEventListener("change", () => {
     draftEntries[Number(inp.dataset.i)].date = inp.value;
   }));
@@ -749,12 +842,19 @@ function renderDraftList() {
 }
 
 $("#parse-btn").addEventListener("click", () => {
-  const raw = $("#import-textarea").value.trim();
+  const raw = $("#import-textarea").value.trim().replace(/^\uFEFF/, "");
   if (!raw) { toast("請先貼上或上傳對話內容"); return; }
   try {
     const json = JSON.parse(raw);
-    const messages = flattenChatGptExport(json);
-    draftEntries = buildDraftsFromMessages(messages);
+    if (looksLikeStructuredHealthJson(json)) {
+      draftEntries = buildDraftsFromStructuredJson(json);
+    } else {
+      const messages = flattenChatGptExport(json);
+      draftEntries = buildDraftsFromMessages(messages);
+      if (!draftEntries.length && !messages.length) {
+        toast("這個 JSON 不是 ChatGPT 匯出格式，也不是家人健康 JSON 格式，請確認檔案內容");
+      }
+    }
   } catch {
     draftEntries = buildDraftsFromPlainText(raw);
   }
@@ -781,7 +881,7 @@ $("#save-drafts-btn").addEventListener("click", async () => {
     try {
       await addDoc(collection(db, appConfig.recordsCollection), {
         date: d.date, time: "", title: d.title, description: d.description,
-        tags: d.tags || [], category: d.category, status: d.status,
+        tags: d.tags || [], category: d.category, status: d.status, person: d.person || "other",
         attachmentCount: 0, source: "gpt-import", createdBy: currentUser(),
         createdAt: serverTimestamp(), updatedAt: serverTimestamp()
       });
@@ -811,7 +911,7 @@ $("#file-input").addEventListener("change", (e) => {
 });
 function readImportFile(file) {
   const reader = new FileReader();
-  reader.onload = () => { $("#import-textarea").value = reader.result; };
+  reader.onload = () => { $("#import-textarea").value = String(reader.result).replace(/^\uFEFF/, ""); };
   reader.readAsText(file);
 }
 
