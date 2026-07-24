@@ -239,7 +239,7 @@ function renderConditionSidebar() {
   const el = $("#condition-sidebar");
   if (!el) return;
   const byPerson = {};
-  allRecords.forEach(r => {
+  allRecords.filter(r => r.source !== "nhi-import").forEach(r => {
     const p = r.person || "other";
     const key = deriveConditionKey(r);
     byPerson[p] = byPerson[p] || {};
@@ -261,7 +261,7 @@ function renderConditionSidebar() {
     });
     html += `</div>`;
   });
-  if (!html) html = `<div class="condition-empty-hint">尚無資料，新增或匯入紀錄後，這裡會自動列出每位家人的病症索引。</div>`;
+  if (!html) html = `<div class="condition-empty-hint">尚無手動新增或 GPT 匯入的紀錄，新增後這裡會自動列出病症索引。</div>`;
   if (conditionFilter) html += `<button class="condition-clear-btn" id="condition-clear-btn">✕ 清除病症篩選</button>`;
   el.innerHTML = html;
   el.querySelectorAll(".condition-item").forEach(item => {
