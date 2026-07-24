@@ -39,7 +39,7 @@
       </div>
       <div class="nav-item" data-route="import">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
-        匯入 GPT 對話
+        資料匯入
       </div>
     </nav>
     <div class="sidebar-footer">
@@ -120,13 +120,33 @@
     <section id="page-import" style="display:none">
       <div class="topbar">
         <div>
-          <div class="page-title">匯入 GPT 對話</div>
-          <div class="page-sub">貼上或上傳 ChatGPT 匯出的對話，系統會嘗試整理成紀錄草稿</div>
+          <div class="page-title">資料匯入</div>
+          <div class="page-sub">支援健保快易通匯出檔，或 ChatGPT 對話紀錄</div>
         </div>
       </div>
 
       <div class="import-panel">
-        <h3>1. 提供對話內容</h3>
+        <h3>健保快易通資料匯入</h3>
+        <p class="desc">支援「健保快易通」App 匯出的門診資料、用藥資料、影像或病理檢查資料、檢驗檢查結果（HTML 格式）。可一次選取多個檔案，系統會自動判斷檔案類型並依時間軸整理。重複上傳同一批資料時，已存在的紀錄會自動偵測並預設不重複匯入。</p>
+        <div class="field" style="max-width:220px;">
+          <label>這批資料屬於</label>
+          <select id="nhi-person">
+            <option value="mother">媽媽</option>
+            <option value="father">爸爸</option>
+            <option value="other">其他</option>
+          </select>
+        </div>
+        <div class="dropzone" id="nhi-dropzone">
+          📄 拖曳一個或多個健保快易通 HTML 檔案到這裡，或點擊選擇檔案
+          <input type="file" id="nhi-file-input" accept=".html,.htm" multiple style="display:none" />
+        </div>
+        <div id="nhi-file-status" class="field-hint"></div>
+        <button class="primary" id="nhi-parse-btn" style="margin-top:8px;">解析健保資料</button>
+        <div class="privacy-note">⚠️ 影像/病理報告內文常含有姓名、病歷號碼、出生日期，系統會自動偵測並遮蔽這些欄位；報告中的英文內容，系統會盡量附上中文參考翻譯，若無法對照則保留原文並標註提醒，請務必自行確認。</div>
+      </div>
+
+      <div class="import-panel">
+        <h3>GPT 對話匯入</h3>
         <p class="desc">可上傳 ChatGPT 匯出的 conversations.json（設定 → 資料控制 → 匯出資料），或直接貼上對話文字。系統只會在瀏覽器內解析，不會上傳到任何第三方伺服器。</p>
         <div class="dropzone" id="dropzone">
           📄 拖曳 JSON 檔案到這裡，或點擊選擇檔案
