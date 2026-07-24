@@ -85,6 +85,10 @@ function fmtDateLabel(dateStr) {
   const wd = ["日", "一", "二", "三", "四", "五", "六"][d.getDay()];
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日（週${wd}）`;
 }
+function fmtShortDate(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
 
 // ============================================================================
 // Auth gate (password hash stored in Firestore settings/access)
@@ -178,6 +182,8 @@ let activeCategoryFilters = new Set();
 let activeStatusFilters = new Set();
 let activePersonFilters = new Set();
 let searchTerm = "";
+let conditionFilter = null; // { person, cond } | null — 左側病症索引篩選
+let selectedTimelineDate = null; // 橫向時間軸目前選取的日期
 
 function startRecordsListener() {
   const q = query(collection(db, appConfig.recordsCollection), orderBy("date", "desc"));
@@ -190,11 +196,26 @@ function startRecordsListener() {
   });
 }
 
+// 從標題推導「病症/主題」關鍵字：NHI 匯入的標題常是「機構｜診斷」，取後半段；
+// 用藥標題是「機構｜用藥（疾病）」，取括號內容。手動/GPT 紀錄則直接用標題本身。
+function deriveConditionKey(record) {
+  let t = (record.title || "").trim();
+  const barIdx = t.indexOf("｜");
+  if (barIdx >= 0) t = t.slice(barIdx + 1).trim();
+  const medMatch = t.match(/^用藥（(.+)）$/);
+  if (medMatch) t = medMatch[1];
+  return t || "其他";
+}
+
 function filteredRecords() {
   return allRecords.filter(r => {
     if (activeCategoryFilters.size && !activeCategoryFilters.has(r.category)) return false;
     if (activeStatusFilters.size && !activeStatusFilters.has(r.status)) return false;
     if (activePersonFilters.size && !activePersonFilters.has(r.person || "other")) return false;
+    if (conditionFilter) {
+      if ((r.person || "other") !== conditionFilter.person) return false;
+      if (deriveConditionKey(r) !== conditionFilter.cond) return false;
+    }
     if (searchTerm) {
       const hay = [r.title, r.description, (r.tags || []).join(" "), CATEGORY_LABELS[r.category], PERSON_LABELS[r.person]].join(" ").toLowerCase();
       if (!hay.includes(searchTerm.toLowerCase())) return false;
@@ -204,9 +225,54 @@ function filteredRecords() {
 }
 
 function renderAll() {
+  renderConditionSidebar();
   renderRings();
   renderCounts();
   if (currentView === "timeline") renderTimeline(); else renderList();
+}
+
+// ----------------------------------------------------------------------------
+// Condition-index sidebar (病症索引) — derived from records, per person
+// ----------------------------------------------------------------------------
+let conditionEntries = [];
+function renderConditionSidebar() {
+  const el = $("#condition-sidebar");
+  if (!el) return;
+  const byPerson = {};
+  allRecords.forEach(r => {
+    const p = r.person || "other";
+    const key = deriveConditionKey(r);
+    byPerson[p] = byPerson[p] || {};
+    byPerson[p][key] = (byPerson[p][key] || 0) + 1;
+  });
+  conditionEntries = [];
+  const order = ["mother", "father", "other"];
+  let html = "";
+  order.filter(p => byPerson[p]).forEach(p => {
+    const conditions = Object.entries(byPerson[p]).sort((a, b) => b[1] - a[1]);
+    html += `<div class="condition-person-block">
+      <div class="condition-person-name"><span class="person-pill ${p}">${PERSON_LABELS[p]}</span></div>`;
+    conditions.forEach(([cond, count]) => {
+      const i = conditionEntries.length;
+      conditionEntries.push({ person: p, cond });
+      const active = conditionFilter && conditionFilter.person === p && conditionFilter.cond === cond;
+      html += `<div class="condition-item ${active ? "active" : ""}" data-i="${i}" title="${escapeHtml(cond)}">
+        <span>${escapeHtml(cond)}</span><span class="count">${count}</span></div>`;
+    });
+    html += `</div>`;
+  });
+  if (!html) html = `<div class="condition-empty-hint">尚無資料，新增或匯入紀錄後，這裡會自動列出每位家人的病症索引。</div>`;
+  if (conditionFilter) html += `<button class="condition-clear-btn" id="condition-clear-btn">✕ 清除病症篩選</button>`;
+  el.innerHTML = html;
+  el.querySelectorAll(".condition-item").forEach(item => {
+    item.addEventListener("click", () => {
+      const entry = conditionEntries[Number(item.dataset.i)];
+      conditionFilter = (conditionFilter && conditionFilter.person === entry.person && conditionFilter.cond === entry.cond) ? null : entry;
+      renderAll();
+    });
+  });
+  const clearBtn = $("#condition-clear-btn");
+  if (clearBtn) clearBtn.addEventListener("click", () => { conditionFilter = null; renderAll(); });
 }
 
 // ----------------------------------------------------------------------------
@@ -240,7 +306,9 @@ function renderRings() {
 
 function renderCounts() {
   const n = filteredRecords().length;
-  $("#record-count-sub").textContent = n === 0 ? "尚無紀錄" : `共 ${n} 筆紀錄`;
+  let text = n === 0 ? "尚無紀錄" : `共 ${n} 筆紀錄`;
+  if (conditionFilter) text += `｜篩選中：${PERSON_LABELS[conditionFilter.person]} · ${conditionFilter.cond}`;
+  $("#record-count-sub").textContent = text;
 }
 
 // ----------------------------------------------------------------------------
@@ -255,14 +323,41 @@ function renderTimeline() {
   }
   const groups = {};
   recs.forEach(r => { (groups[r.date] = groups[r.date] || []).push(r); });
-  const dates = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+  const dates = Object.keys(groups).sort((a, b) => b.localeCompare(a)); // 最新在左
 
-  el.innerHTML = dates.map(date => `
-    <div class="timeline-group">
-      <div class="timeline-date-label">${fmtDateLabel(date)}</div>
-      ${groups[date].map(cardHtml).join("")}
-    </div>
-  `).join("");
+  if (!selectedTimelineDate || !groups[selectedTimelineDate]) selectedTimelineDate = dates[0];
+
+  const stripHtml = dates.map(date => {
+    const items = groups[date];
+    const cats = [...new Set(items.map(i => i.category))];
+    const active = date === selectedTimelineDate;
+    return `
+      <div class="h-timeline-marker ${active ? "active" : ""}" data-date="${date}">
+        <div class="date-label">${fmtShortDate(date)}</div>
+        <div class="h-dots">${cats.slice(0, 4).map(c => `<span class="dot" style="background:var(--c-${c})"></span>`).join("")}</div>
+        <div class="h-count">${items.length}筆</div>
+      </div>`;
+  }).join("");
+
+  const detailItems = groups[selectedTimelineDate] || [];
+  const detailHtml = `
+    <div class="timeline-date-label">${fmtDateLabel(selectedTimelineDate)}</div>
+    ${detailItems.map(cardHtml).join("")}
+  `;
+
+  el.innerHTML = `
+    <div class="h-timeline" id="h-timeline">${stripHtml}</div>
+    <div class="h-timeline-detail">${detailHtml}</div>
+  `;
+
+  el.querySelectorAll(".h-timeline-marker").forEach(m => {
+    m.addEventListener("click", () => {
+      selectedTimelineDate = m.dataset.date;
+      renderTimeline();
+    });
+  });
+  const activeMarker = el.querySelector(".h-timeline-marker.active");
+  if (activeMarker) activeMarker.scrollIntoView({ inline: "center", block: "nearest" });
 
   el.querySelectorAll(".record-card").forEach(card => {
     card.addEventListener("click", () => openEditModal(card.dataset.id));
