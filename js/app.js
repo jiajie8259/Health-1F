@@ -1375,6 +1375,27 @@ async function fetchExistingNhiSourceKeys() {
   }
 }
 
+$("#nhi-clear-old-btn").addEventListener("click", async () => {
+  const person = $("#nhi-person").value;
+  const personLabel = PERSON_LABELS[person] || person;
+  if (!confirm(`確定要刪除「${personLabel}」所有健保快易通匯入的紀錄嗎？\n\n手動新增和 GPT 對話匯入的紀錄不會受影響，但已刪除的健保資料無法復原。刪除後請重新選取檔案並按「解析健保資料」重新匯入。`)) return;
+  $("#nhi-clear-status").textContent = "刪除中…";
+  try {
+    const snap = await getDocs(query(
+      collection(db, appConfig.recordsCollection),
+      where("source", "==", "nhi-import"),
+      where("person", "==", person)
+    ));
+    await Promise.all(snap.docs.map(d => deleteDoc(doc(db, appConfig.recordsCollection, d.id))));
+    $("#nhi-clear-status").textContent = `已刪除 ${snap.docs.length} 筆「${personLabel}」的舊健保匯入紀錄，可以重新匯入了`;
+    toast(`已刪除 ${snap.docs.length} 筆舊資料`);
+  } catch (err) {
+    console.error(err);
+    $("#nhi-clear-status").textContent = "";
+    toast("刪除失敗，請稍後再試");
+  }
+});
+
 $("#nhi-parse-btn").addEventListener("click", async () => {
   if (!nhiFiles.length) { toast("請先選取或拖曳健保快易通匯出的 HTML 檔案"); return; }
   const person = $("#nhi-person").value;
