@@ -191,11 +191,39 @@ button.ghost {
 .user-name { font-size: 13px; font-weight: 700; }
 .user-sub-action { font-size: 11px; color: var(--text-tertiary); cursor: pointer; }
 
+/* ==========================================================================
+   Condition-index sidebar (病症索引) — per person, derived from records
+   ========================================================================== */
+.condition-sidebar {
+  width: 226px; flex-shrink: 0;
+  background: var(--bg-elevated); border-right: 1px solid var(--divider);
+  padding: 24px 14px; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+}
+.condition-person-block { margin-bottom: 22px; }
+.condition-person-block:last-child { margin-bottom: 0; }
+.condition-person-name { padding: 0 4px 8px; }
+.condition-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  font-size: 12.5px; font-weight: 600; color: var(--text-secondary);
+  cursor: pointer; margin-bottom: 2px; transition: background .12s ease;
+}
+.condition-item span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.condition-item:hover { background: var(--bg); }
+.condition-item.active { background: var(--text-primary); color: white; }
+.condition-item .count { font-size: 10.5px; color: var(--text-tertiary); flex-shrink: 0; }
+.condition-item.active .count { color: rgba(255,255,255,0.75); }
+.condition-empty-hint { font-size: 12px; color: var(--text-tertiary); padding: 6px 4px; }
+.condition-clear-btn {
+  display: block; width: 100%; text-align: center; margin-top: 4px;
+  font-size: 11.5px; font-weight: 700; color: var(--c-exam);
+  background: none; border: none; cursor: pointer; padding: 6px;
+}
+
 .main {
   flex: 1; min-width: 0;
-  padding: 26px 32px 90px;
-  max-width: 900px;
-  margin: 0 auto;
+  padding: 26px 36px 90px;
+  max-width: 1280px;
   width: 100%;
 }
 
@@ -266,6 +294,31 @@ button.ghost {
    Record cards — timeline
    ========================================================================== */
 .timeline { position: relative; }
+
+/* Horizontal scrollable date strip + detail panel below */
+.h-timeline {
+  display: flex; gap: 10px; overflow-x: auto; padding: 4px 4px 16px;
+  scroll-snap-type: x proximity; margin-bottom: 6px;
+}
+.h-timeline::-webkit-scrollbar { height: 6px; }
+.h-timeline::-webkit-scrollbar-thumb { background: var(--divider); border-radius: 999px; }
+.h-timeline-marker {
+  flex: 0 0 auto; min-width: 66px; padding: 10px 12px;
+  background: var(--card-bg); border-radius: var(--radius-md); box-shadow: var(--shadow-card);
+  cursor: pointer; text-align: center; scroll-snap-align: start;
+  border: 2px solid transparent; transition: border-color .12s ease, transform .12s ease;
+}
+.h-timeline-marker:hover { transform: translateY(-1px); }
+.h-timeline-marker.active { border-color: var(--text-primary); }
+.h-timeline-marker .date-label { font-size: 11.5px; font-weight: 800; color: var(--text-secondary); white-space: nowrap; }
+.h-timeline-marker .h-dots { display: flex; gap: 3px; justify-content: center; margin-top: 7px; }
+.h-timeline-marker .h-dots .dot { width: 7px; height: 7px; border-radius: 50%; }
+.h-timeline-marker .h-count { font-size: 10px; color: var(--text-tertiary); margin-top: 4px; }
+.h-timeline-detail { min-height: 80px; }
+
+@media (max-width: 1000px) and (min-width: 761px) {
+  .condition-sidebar { display: none; }
+}
 .timeline-group { margin-bottom: 26px; }
 .timeline-date-label {
   font-size: 12.5px; font-weight: 800; color: var(--text-tertiary);
@@ -439,6 +492,7 @@ button.ghost {
 .bottom-nav { display: none; }
 @media (max-width: 760px) {
   .sidebar { display: none; }
+  .condition-sidebar { display: none; }
   .main { padding: 18px 16px 90px; max-width: 100%; }
   .page-title { font-size: 21px; }
   .rings-card { padding: 18px; gap: 16px; }
