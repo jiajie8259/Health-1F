@@ -960,7 +960,7 @@ function parseNhiMedTable(doc) {
     const texts = tds.map(nhiCellText);
     if (tds.length === 9 && texts[0]) {
       if (current) groups.push(current);
-      current = { institution: texts[1], date: rocToIso(texts[2]), diseaseCode: texts[7], diseaseName: texts[8], drugs: [] };
+      current = { institution: texts[1], date: rocToIso(texts[2]), dischargeDate: rocToIso(texts[3]), diseaseCode: texts[7], diseaseName: texts[8], drugs: [] };
     } else if (tds.length === 8 && current) {
       if (texts[2]) current.drugs.push({ code: texts[1], name: texts[2], drugClass: texts[3], days: texts[4], qty: texts[7] });
     }
@@ -1101,40 +1101,67 @@ function extractDoctorTag(reportText) {
   return m ? `醫師:${m[2]}` : null;
 }
 
-function buildNhiVisitDrafts(doc, person) {
-  return parseNhiVisitTable(doc).map(g => {
-    const parts = [];
-    if (g.mainDiagName) parts.push(`【主診斷】${g.mainDiagCode} ${g.mainDiagName}`);
-    if (g.mainProcName) parts.push(`【主處置】${g.mainProcCode} ${g.mainProcName}`);
-    if (g.subDiag.length) parts.push(`【次診斷】\n` + g.subDiag.map(s => `・${s}`).join("\n"));
-    if (g.subProc.length) parts.push(`【次處置】\n` + g.subProc.map(s => `・${s}`).join("\n"));
-    if (g.orders.length) parts.push(`【醫囑/處置項目】\n` + g.orders.map(s => `・${s}`).join("\n"));
-    const description = parts.join("\n\n");
-    const { text: safeDesc, hits } = redact(description);
-    return {
-      date: g.date, category: "visit", status: "done", person,
-      title: `${g.institution}｜${g.mainDiagName || g.mainProcName || "門診"}`.slice(0, 36),
-      description: safeDesc, tags: [g.institution].filter(Boolean), hits, include: true,
-      sourceKey: `nhi:visit:${g.date}:${g.institution}:${g.mainDiagCode}`
-    };
+// 合併同一天、同一機構、同一診斷碼的「門診」與「用藥」原始資料
+// （健保「慢性病連續處方箋」會把同一次看診的每次調劑各記一筆 claim，
+// 就醫日期卻都寫同一天，所以要合併回一筆紀錄，並保留調劑效期資訊）
+function mergeNhiVisitAndMed(rawGroups) {
+  const clusters = {};
+  rawGroups.forEach(g => {
+    const diagCode = g.kind === "visit" ? g.mainDiagCode : g.diseaseCode;
+    const key = `${g.institution}::${g.date}::${diagCode}`;
+    clusters[key] = clusters[key] || { institution: g.institution, date: g.date, diagCode, visits: [], meds: [] };
+    if (g.kind === "visit") clusters[key].visits.push(g); else clusters[key].meds.push(g);
   });
+  return Object.values(clusters);
 }
 
-function buildNhiMedDrafts(doc, person) {
-  return parseNhiMedTable(doc).map(g => {
-    const drugLines = g.drugs.map(d => `・${d.name}${d.drugClass ? "（" + d.drugClass + "）" : ""} － 給藥${d.days || "?"}天，總量${d.qty || "?"}`);
-    const description = [
-      g.diseaseName ? `【對應疾病】${g.diseaseCode} ${g.diseaseName}` : "",
-      drugLines.length ? `【用藥明細】\n${drugLines.join("\n")}` : ""
-    ].filter(Boolean).join("\n\n");
-    const { text: safeDesc, hits } = redact(description);
-    return {
-      date: g.date, category: "med", status: "done", person,
-      title: `${g.institution}｜用藥（${g.diseaseName || g.drugs[0]?.name || ""}）`.slice(0, 36),
-      description: safeDesc, tags: [g.institution].filter(Boolean), hits, include: true,
-      sourceKey: `nhi:med:${g.date}:${g.institution}`
-    };
+function buildMergedNhiDraft(cluster, person) {
+  const v = cluster.visits[0];
+  const m = cluster.meds[0];
+  const diagName = (v && v.mainDiagName) || (m && m.diseaseName) || "";
+
+  const subDiag = new Set(), subProc = new Set(), orders = new Set();
+  cluster.visits.forEach(g => {
+    g.subDiag.forEach(s => subDiag.add(s));
+    g.subProc.forEach(s => subProc.add(s));
+    g.orders.forEach(o => orders.add(o));
   });
+
+  const drugMap = new Map();
+  cluster.meds.forEach(g => {
+    g.drugs.forEach(d => {
+      const dk = `${d.name}__${d.days}__${d.qty}`;
+      if (!drugMap.has(dk)) drugMap.set(dk, { ...d, dischargeDates: [] });
+      if (g.dischargeDate) drugMap.get(dk).dischargeDates.push(g.dischargeDate);
+    });
+  });
+
+  const refillCount = Math.max(cluster.visits.length, cluster.meds.length);
+  const parts = [];
+  if (refillCount > 1) parts.push(`（本次為連續處方箋，健保資料顯示共 ${refillCount} 次調劑紀錄，已自動合併為一筆）`);
+  if (diagName) parts.push(`【主診斷】${cluster.diagCode} ${diagName}`);
+  if (subDiag.size) parts.push(`【次診斷】\n` + [...subDiag].map(s => `・${s}`).join("\n"));
+  if (subProc.size) parts.push(`【次處置】\n` + [...subProc].map(s => `・${s}`).join("\n"));
+  if (orders.size) parts.push(`【醫囑/處置項目】\n` + [...orders].map(s => `・${s}`).join("\n"));
+  if (drugMap.size) {
+    const drugLines = [...drugMap.values()].map(d => {
+      let line = `・${d.name}${d.drugClass ? "（" + d.drugClass + "）" : ""} － 每次${d.days || "?"}天，總量${d.qty || "?"}`;
+      if (d.dischargeDates.length) line += `\n　調劑效期：${d.dischargeDates.sort().join("、")}`;
+      return line;
+    });
+    parts.push(`【用藥】\n` + drugLines.join("\n"));
+  }
+  const description = parts.join("\n\n");
+  const { text: safeDesc, hits } = redact(description);
+  const category = v ? "visit" : "med";
+  const titlePrefix = v ? "" : "用藥（";
+  const titleSuffix = v ? "" : "）";
+  return {
+    date: cluster.date, category, status: "done", person,
+    title: `${cluster.institution}｜${titlePrefix}${diagName}${titleSuffix}`.slice(0, 36),
+    description: safeDesc, tags: [cluster.institution].filter(Boolean), hits, include: true,
+    sourceKey: `nhi:visit:${cluster.date}:${cluster.institution}:${cluster.diagCode}`
+  };
 }
 
 function buildNhiImagingDrafts(doc, person) {
@@ -1166,15 +1193,6 @@ function buildNhiLabDrafts(doc, person) {
       sourceKey: `nhi:lab:${g.examDate}:${g.institution}`
     };
   });
-}
-
-function buildNhiDrafts(doc, person) {
-  const kind = detectNhiKind(doc);
-  if (kind === "visit") return buildNhiVisitDrafts(doc, person);
-  if (kind === "med") return buildNhiMedDrafts(doc, person);
-  if (kind === "imaging") return buildNhiImagingDrafts(doc, person);
-  if (kind === "lab") return buildNhiLabDrafts(doc, person);
-  return null; // 無法辨識的檔案
 }
 
 function renderDraftList() {
@@ -1361,20 +1379,26 @@ $("#nhi-parse-btn").addEventListener("click", async () => {
   if (!nhiFiles.length) { toast("請先選取或拖曳健保快易通匯出的 HTML 檔案"); return; }
   const person = $("#nhi-person").value;
   $("#nhi-file-status").textContent = "解析中…";
-  let allDrafts = [];
+  let visitMedRaw = []; // 門診／用藥原始資料，先收集齊全再合併，避免同一天的連續處方被拆成好幾筆
+  let otherDrafts = []; // 影像/病理、檢驗結果不需要合併，直接轉成候選紀錄
   let unrecognized = [];
   for (const file of nhiFiles) {
     try {
       const text = await readFileAsText(file);
       const doc = new DOMParser().parseFromString(text, "text/html");
-      const drafts = buildNhiDrafts(doc, person);
-      if (drafts === null) { unrecognized.push(file.name); continue; }
-      allDrafts = allDrafts.concat(drafts);
+      const kind = detectNhiKind(doc);
+      if (kind === "visit") parseNhiVisitTable(doc).forEach(g => visitMedRaw.push({ ...g, kind: "visit" }));
+      else if (kind === "med") parseNhiMedTable(doc).forEach(g => visitMedRaw.push({ ...g, kind: "med" }));
+      else if (kind === "imaging") otherDrafts = otherDrafts.concat(buildNhiImagingDrafts(doc, person));
+      else if (kind === "lab") otherDrafts = otherDrafts.concat(buildNhiLabDrafts(doc, person));
+      else unrecognized.push(file.name);
     } catch (err) {
       console.error(err);
       unrecognized.push(file.name);
     }
   }
+  const mergedDrafts = mergeNhiVisitAndMed(visitMedRaw).map(cluster => buildMergedNhiDraft(cluster, person));
+  let allDrafts = mergedDrafts.concat(otherDrafts);
   if (unrecognized.length) toast(`無法辨識檔案格式：${unrecognized.join("、")}`);
 
   const existingKeys = await fetchExistingNhiSourceKeys();
