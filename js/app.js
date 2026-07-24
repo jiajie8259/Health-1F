@@ -42,6 +42,15 @@ function redact(text) {
   if (!text) return { text: "", hits: 0 };
   let hits = 0;
   let out = text;
+  // 先處理有明確欄位標籤的識別資料（健保匯出報告常見：病患姓名、病歷號碼、出生日期）
+  const LABELED = [
+    /(病患姓名|受檢者姓名|姓名)\s*[:：]\s*\S+/g,
+    /(病歷號碼|病歷号碼|病歷編號)\s*[:：]\s*\S+/g,
+    /(出生日期)\s*[:：]\s*[\d/\-]+/g
+  ];
+  LABELED.forEach(re => {
+    out = out.replace(re, (m, label) => { hits++; return `${label}：████`; });
+  });
   for (const p of SENSITIVE_PATTERNS) {
     out = out.replace(p.re, (m) => { hits++; return "█".repeat(Math.min(m.length, 10)); });
   }
@@ -778,6 +787,301 @@ function buildDraftsFromStructuredJson(json) {
   return drafts;
 }
 
+// ============================================================================
+// 健保快易通資料匯入（門診／用藥／影像病理／檢驗檢查結果 HTML 匯出檔）
+// ============================================================================
+function nhiCellText(el) {
+  return (el.textContent || "").replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
+}
+function rocToIso(raw) {
+  if (!raw) return null;
+  const m = String(raw).trim().match(/^(\d{2,3})\/(\d{1,2})\/(\d{1,2})/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10) + 1911;
+  return `${y}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}`;
+}
+
+function detectNhiKind(doc) {
+  const t = (doc.querySelector("title")?.textContent || "") + " " + (doc.body?.textContent || "").slice(0, 400);
+  if (t.includes("門診資料")) return "visit";
+  if (t.includes("用藥資料")) return "med";
+  if (t.includes("影像或病理")) return "imaging";
+  if (t.includes("檢驗檢查結果") || t.includes("檢驗檢查")) return "lab";
+  return null;
+}
+
+function biggestListTable(doc) {
+  const tables = [...doc.querySelectorAll("table.list")];
+  if (!tables.length) return null;
+  return tables.sort((a, b) => b.querySelectorAll("tr").length - a.querySelectorAll("tr").length)[0];
+}
+
+// ---- 門診資料 ----
+function parseNhiVisitTable(doc) {
+  const table = biggestListTable(doc);
+  if (!table) return [];
+  const rows = [...table.querySelectorAll("tr")];
+  const groups = [];
+  let current = null, subState = 0;
+  rows.forEach(tr => {
+    const tds = [...tr.children].filter(el => el.tagName === "TD");
+    if (!tds.length || tds.length === 1) return;
+    const texts = tds.map(nhiCellText);
+    if (tds.length >= 10 && texts[0]) {
+      if (current) groups.push(current);
+      current = {
+        institution: texts[1], date: rocToIso(texts[2]),
+        mainDiagCode: texts[5], mainDiagName: texts[6],
+        mainProcCode: texts[7], mainProcName: texts[8],
+        subDiag: [], subProc: [], orders: []
+      };
+      subState = 1;
+    } else if (tds.length >= 10 && !texts[0] && current) {
+      if (subState === 1) {
+        for (let i = 1; i < texts.length; i += 2) if (texts[i]) current.subDiag.push(`${texts[i]} ${texts[i + 1] || ""}`.trim());
+        subState = 2;
+      } else if (subState === 2) {
+        for (let i = 1; i < texts.length; i += 2) if (texts[i]) current.subProc.push(`${texts[i]} ${texts[i + 1] || ""}`.trim());
+        subState = 3;
+      }
+    } else if (tds.length === 4 && current) {
+      if (texts[2]) current.orders.push(texts[2]);
+    }
+  });
+  if (current) groups.push(current);
+  return groups.filter(g => g.date);
+}
+
+// ---- 用藥資料 ----
+function parseNhiMedTable(doc) {
+  const table = biggestListTable(doc);
+  if (!table) return [];
+  const rows = [...table.querySelectorAll("tr")];
+  const groups = [];
+  let current = null;
+  rows.forEach(tr => {
+    const tds = [...tr.children].filter(el => el.tagName === "TD");
+    if (!tds.length || tds.length === 1) return;
+    const texts = tds.map(nhiCellText);
+    if (tds.length === 9 && texts[0]) {
+      if (current) groups.push(current);
+      current = { institution: texts[1], date: rocToIso(texts[2]), diseaseCode: texts[7], diseaseName: texts[8], drugs: [] };
+    } else if (tds.length === 8 && current) {
+      if (texts[2]) current.drugs.push({ code: texts[1], name: texts[2], drugClass: texts[3], days: texts[4], qty: texts[7] });
+    }
+  });
+  if (current) groups.push(current);
+  return groups.filter(g => g.date);
+}
+
+// ---- 影像或病理檢查資料 ----
+function parseNhiImagingTable(doc) {
+  const table = biggestListTable(doc);
+  if (!table) return [];
+  const rows = [...table.querySelectorAll("tr")];
+  const groups = [];
+  let current = null;
+  rows.forEach(tr => {
+    const tds = [...tr.children].filter(el => el.tagName === "TD");
+    if (!tds.length) return;
+    const texts = tds.map(nhiCellText);
+    if (tds.length === 7) {
+      if (current) groups.push(current);
+      current = {
+        institution: texts[1], visitDate: rocToIso(texts[2]), examDate: rocToIso(texts[3]) || rocToIso(texts[2]),
+        orderCode: texts[5], orderName: texts[6], reportText: ""
+      };
+    } else if (tds.length === 1 && current) {
+      const txt = nhiCellText(tds[0]);
+      if (txt.length > 5) current.reportText = (current.reportText ? current.reportText + "\n" : "") + txt;
+    }
+  });
+  if (current) groups.push(current);
+  return groups.filter(g => g.examDate || g.visitDate);
+}
+
+// ---- 檢驗檢查結果 ----
+function parseNhiLabTable(doc) {
+  const table = biggestListTable(doc);
+  if (!table) return [];
+  const rows = [...table.querySelectorAll("tr")];
+  const items = [];
+  rows.forEach(tr => {
+    const tds = [...tr.children].filter(el => el.tagName === "TD");
+    if (tds.length < 10) return;
+    const texts = tds.map(nhiCellText);
+    if (!texts[1] && !texts[2]) return;
+    items.push({
+      institution: texts[1], examDate: rocToIso(texts[3]) || rocToIso(texts[2]),
+      itemName: texts[7], value: texts[8], unit: texts[9], ref: texts[10]
+    });
+  });
+  const groups = {};
+  items.forEach(it => {
+    if (!it.examDate) return;
+    const key = `${it.institution}__${it.examDate}`;
+    (groups[key] = groups[key] || { institution: it.institution, examDate: it.examDate, items: [] }).items.push(it);
+  });
+  return Object.values(groups);
+}
+
+// 常見英文報告全文對照（來自實際健保報告樣本，逐句人工核對翻譯）。
+// 找到完全比對時會在原文後方附加中文參考翻譯，找不到的英文內容會保留原文並標註提醒。
+const NHI_REPORT_TRANSLATIONS = [
+  { en: "Purpose for Endoscopy : Ana mass", zh: "檢查目的：肛門腫塊" },
+  { en: "Pre-medication : IV Conscious sedation by anesthesiologist; Fucon 20mg i.m.", zh: "術前用藥：由麻醉科醫師執行靜脈鎮靜；肌肉注射 Fucon 20mg" },
+  { en: "Colonoscopic Findings : Up to 80cm from anal verge (to the cecum) showed: -Colon preparation regimen: BK -Colon preparation quality: BPPS 8 -Time from anus to cecum: 4 minutes 20 seconds. -Ileocecal valve: essentially normal. -Internal and external hemorrhoid.", zh: "大腸鏡檢查所見：內視鏡由肛門口深入約80公分（達盲腸），腸道清潔藥物：BK方案；腸道清潔品質：BPPS評分8分；由肛門至盲腸所需時間：4分20秒；迴盲瓣：大致正常；內痔合併外痔。" },
+  { en: "Endoscopic diagnosis : Hemorrhoids, mixed", zh: "內視鏡診斷：混合痔（內外痔）" },
+  { en: "Advice : Follow up", zh: "建議：門診追蹤" },
+  { en: "Film of regular chest:P-A upright. There is tortuous of the aorta noted.The heart and mediastinum revealed essential negative.Evidence of exaggeration and coarse of lung markings over both lungs are seen.The bony thoracic cage and both hemidiaphragm are essential intact. Impression:There are tortuous of the aorta and exaggeration, coarse of lung markings over both lungs noted.",
+    zh: "一般胸部X光（後前站立位）：主動脈可見迂曲；心臟及縱膈腔大致正常；雙側肺紋理增加且變粗；胸廓骨骼及雙側橫膈大致完整。診斷印象：主動脈迂曲，雙側肺紋理增加且變粗。" },
+  { en: "Film of the ches:Left lateral view. Impression:Tortuous of aorta and exaggeration markings over lung fields are showed.",
+    zh: "胸部X光（左側面）：診斷印象：主動脈迂曲，肺野紋理增加。" },
+  { en: "C-T scan of brain,chest and abdomen,without enhancement revealed: The heart and mediastineal great vessels are essential negative.Prominent,coarse of bronchovascular markings over both lungs, evidence of bronchiectasis over left upper and focal pleural thickness over both lower,a granuloma over right middle are showed. There were no evidence of mediastineal LAP. The liver,spleen,pancreas and both kidneys are essential negative but hepatic cysts. The gallbladder is normal visualized without opaque stones. No significant abnormal findings of the visualized bowel loops or evidece of ascites,retroperitoneal lymph adenopathies were demonstrated. Old compression fracture of T12 and post-op with hysterectomy are showed. Impression:Chronic inflammatory process over both lungs,bronchiectasis over left upper and pleural thickness over left lower. Focal pleural thickness with granuloma over right middle. Hpatic cysts,old compressio fracture of T12 ad post hysterectomy.",
+    zh: "腦部、胸部及腹部電腦斷層（未打顯影劑）：心臟及縱膈腔大血管大致正常；雙側肺支氣管血管紋理明顯增粗，左上肺可見支氣管擴張，雙下肺局部胸膜增厚，右中肺可見一處肉芽腫；未見縱膈腔淋巴腫大證據；肝、脾、胰臟及雙腎大致正常，但肝臟有囊腫；膽囊型態正常，未見顯影結石；腸道未見明顯異常，亦無腹水或後腹腔淋巴腫大證據；可見第12胸椎陳舊性壓迫性骨折，及子宮切除手術後改變。診斷印象：雙側肺部慢性發炎反應，左上肺支氣管擴張及左下肺胸膜增厚；右中肺局部胸膜增厚合併肉芽腫；肝囊腫；第12胸椎陳舊性壓迫性骨折；子宮切除術後狀態。" },
+  { en: "CT scan of the chest without contrast enhancement shows: 1. Bronchiectases and subsegmental atelectases in LUL LLL and RML. 2. Multiple small (＜0.4cm) subpleural peribronchial and centrilobular nodules in both lungs. 3. Small mediastinal lymph nodes. 4. No pleural effusion. 5. Multiple calcified nodules in left neck. 6. Cysts in liver. No adrenal mass. 7. Old compression fracture at T11.",
+    zh: "胸部電腦斷層（未打顯影劑）：1. 左上肺、左下肺及右中肺可見支氣管擴張及部分肺葉塌陷（肺不張）。2. 雙側肺野可見多處小於0.4公分之胸膜下、支氣管周圍及小葉中心結節。3. 縱膈腔淋巴結稍大但未達異常標準。4. 無肋膜積液。5. 左頸部可見多處鈣化結節。6. 肝臟囊腫，無腎上腺腫塊。7. 第11胸椎陳舊性壓迫性骨折。" },
+  { en: "CT scan of the chest without contrast enhancement shows: - Bronchiectases and subsegmental atelectases in LUL LLL and RML. - Multiple small (＜0.4cm) subpleural peribronchial and centrilobular nodules in both lungs. - Small mediastinal lymph nodes. - No pleural effusion. - Multiple calcified nodules in left neck. - Cysts in liver. No adrenal mass. - Old compression fracture at T11.",
+    zh: "胸部電腦斷層（未打顯影劑）：支氣管擴張及部分肺葉塌陷（左上肺、左下肺、右中肺）；雙側肺野多處小於0.4公分之胸膜下／支氣管周圍／小葉中心結節；縱膈腔淋巴結稍大但未達異常；無肋膜積液；左頸部多處鈣化結節；肝臟囊腫，無腎上腺腫塊；第11胸椎陳舊性壓迫性骨折。" },
+  { en: "Bronchiectases and subsegmental atelectases. Multiple tiny nodules in both lungs suggest follow up. Calcified nodules in left neck.",
+    zh: "支氣管擴張及部分肺葉塌陷；雙側肺野多發小結節，建議追蹤；左頸部鈣化結節。" },
+  { en: "＞ Clear bilateral costophrenic angle. ＞ Normal heart size. ＞ Clear bilateral lung field. ＞ Intact bony structure. Stationary soft tissue mass, with several nodular calcifications in it, at left side of the neck, is noted.",
+    zh: "雙側肋膈角清晰；心臟大小正常；雙側肺野清晰；骨骼結構完整。左頸部可見穩定（無變化）之軟組織腫塊，內含多處結節狀鈣化。" },
+  { en: "＞ Clear bilateral lung field.", zh: "雙側肺野清晰。" },
+  { en: "Sinus rhythm……normal P axis, V-rate 50- 99 Abnormal R-wave progression, early transition……QRS area＞0 in V2 Repol abnrm suggests ischemia, diffuse leads……ST-T neg, ant/lat/inf Prolonged QT interval……QTc ＞500mS",
+    zh: "竇性心律，P波軸正常，心室率50-99；R波遞增異常（過早轉位）；復極異常，提示瀰漫性導程缺血徵象（前壁/側壁/下壁ST-T波呈負向）；QT間期延長，校正後QTc大於500毫秒。" },
+  { en: "Sinus rhythm……normal P axis, V-rate 50- 99 Borderline T wave abnormalities……T/QRS ratio ＜ 1/20 or flat T",
+    zh: "竇性心律，P波軸正常，心室率50-99；臨界性T波異常（T波/QRS波比小於1/20或T波平坦）。" },
+  { en: "Sinus rhythm……normal P axis, V-rate 50- 99", zh: "竇性心律，P波軸正常，心室率50-99。" },
+  { en: "＞ Nodular shadow(s) at right lower lung field.", zh: "右下肺野可見結節狀陰影。" },
+  { en: "Supine chest AP: ＞ Nodular shadow(s) at right lower lung field. ＞ The heart size is within normal limit.",
+    zh: "平躺姿勢胸部X光（前後向）：右下肺野可見結節狀陰影；心臟大小正常範圍內。" },
+  { en: "boggy turbinates, left nasal cavity and NP mild mucopus, left VPG, good VF movement",
+    zh: "鼻甲黏膜水腫（鬆軟腫脹）；左側鼻腔及鼻咽部有輕微黏膿性分泌物；左側聲帶溝；聲帶活動良好。" },
+  { en: "anoscopy:prominent internal hemorrhoids with erythematous change and thromboses at 3, 7, and 11 o`clock directions of anus FOBT:",
+    zh: "肛門鏡檢查：可見明顯內痔，合併發紅及血栓變化，位於肛門3點、7點、11點方向。糞便潛血檢查（FOBT）：（未附結果）" },
+  { en: "[ Indications ] Anal bleeding,Anal mass [ Findings ] Hemorrhoids： internal, at 3, 7, 11 o ’clock direction, (grade 3) prolapsed internal, at 7 o ’clock direction [ Remarks ] Grade III hemorrhoid",
+    zh: "【檢查適應症】肛門出血、肛門腫塊。【檢查所見】痔瘡：內痔位於3、7、11點方向（第三度），7點方向內痔脫垂。【備註】第三度痔瘡。" },
+  { en: "Chest X ray shows: ＞ Normal heart size and configuration. ＞ Aortic tortuosity and Calcified aortic knob. ＞ No widening of the mediastinum. ＞ No definite active lung lesion. ＞ Mild bilateral apical pleural thickening. ＞ Clear cardiophrenic angles, bilateral. ＞ Degenerative change of spine with spur formation. ＞ Nodular shadow(s) over left lower neck region, without significant interval change.",
+    zh: "胸部X光顯示：心臟大小及形態正常；主動脈迂曲並主動脈弓鈣化；縱膈腔無增寬；未見明確活動性肺部病灶；雙側肺尖輕度肋膜增厚；雙側心膈角清晰；脊椎退化性改變並骨刺形成；左頸下方結節狀陰影，與先前比較無明顯變化。" },
+  { en: "No significant active lung lesion. Please clinical correlation.", zh: "無明顯活動性肺部病灶，建議配合臨床評估。" },
+  { en: "Endoscope: EC-760R-V/M/7C727K169 Medication: Hyoscine-N-Butylbromide (Buscopan) 10 mg IV Preparation method: H:Bowklean Preparation Time: Split dose Preparation Quality: Fair Insertion Level: Cecum Sedation: Yes AntiPlatelet: Nil Complication: 1:none [ Symptoms ] Bowel habit change [ Endoscopic Findings ] The colonoscope was inserted to the cecum. The colon prepare was fair with some watery stool over A to S colon, which may mask small lesion. A 0.3cm Isp polyp was noted at A-colon, s/p biopsy. Internal hemorrhoid was also found. [ Diagnosis ] Colorectal polyp,A-colon,s/p biopsy Internal hemorrhoids,Anus [ Comment ] pending for pathology report",
+    zh: "內視鏡型號：EC-760R-V/M/7C727K169。用藥：Buscopan 10毫克靜脈注射。清腸藥物：Bowklean，分次服用，清潔品質尚可。內視鏡到達盲腸，鎮靜：有。【症狀】排便習慣改變。【內視鏡檢查所見】大腸鏡已深入至盲腸，腸道清潔尚可，升結腸至乙狀結腸間有些許水便，可能遮蔽小病灶；升結腸處發現一顆0.3公分無蒂型息肉，已切片；另發現內痔。【診斷】升結腸大腸息肉（已切片）；肛門內痔。【備註】病理報告結果待確認。" },
+  { en: "The specimen submitted consists of a tissue fragment, measuring 0.3 x 0.2 x 0.1 cm in size, fixed in formalin. Grossly, it is white and soft. All for section. MICROSCOPIC 1. Histologic type: Tubular adenoma 2. Histologic features: Tubular proliferation of adenomatous glands 3. Low-grade dysplasia: Present 4. High-grade dysplasia or invasive carcinoma: Absent 5. Margin: Cannot be assessed",
+    zh: "送檢檢體為一小塊組織，大小約0.3×0.2×0.1公分，經福馬林固定，肉眼呈白色、質地柔軟，全部取材製片。顯微鏡檢查：1. 組織型態：管狀腺瘤。2. 組織特徵：腺瘤性腺體呈管狀增生。3. 低度分化不良：有。4. 高度分化不良或侵襲性癌：無。5. 邊緣：無法評估。" }
+];
+
+// 常見報告段落標題（找不到整段對照時，至少翻譯常見標題方便閱讀）
+const NHI_LABEL_GLOSSARY = [
+  ["Purpose for Endoscopy", "檢查目的"], ["Endoscope", "內視鏡型號"], ["Medication", "用藥"],
+  ["Pre-medication", "術前用藥"], ["Colonoscopic Findings", "大腸鏡檢查所見"],
+  ["Endoscopic Findings", "內視鏡檢查所見"], ["Endoscopic diagnosis", "內視鏡診斷"], ["Diagnosis", "診斷"],
+  ["Advice", "建議"], ["Findings", "檢查所見"], ["Impression", "診斷印象"], ["Indications", "適應症"],
+  ["Remarks", "備註"], ["Comment", "備註"], ["Symptoms", "症狀"], ["Technician", "技術員"],
+  ["Reported by", "報告醫師"], ["Sedation", "鎮靜"], ["Complication", "併發症"]
+];
+
+function translateNhiReportText(text) {
+  if (!text) return { text: "", translated: false, hasResidualEnglish: false };
+  let out = text;
+  let residualCheck = text;
+  let translated = false;
+  NHI_REPORT_TRANSLATIONS.forEach(({ en, zh }) => {
+    if (out.includes(en)) {
+      out = out.replace(en, `${en}\n〔中文參考翻譯〕${zh}`);
+      residualCheck = residualCheck.split(en).join(""); // 已成功翻譯的段落從殘留英文檢查中移除
+      translated = true;
+    }
+  });
+  NHI_LABEL_GLOSSARY.forEach(([en, zh]) => {
+    const re = new RegExp(`\\b${en}\\b\\s*:`, "g");
+    out = out.replace(re, `${en}（${zh}）:`);
+  });
+  const hasResidualEnglish = /[A-Za-z]{4,}/.test(residualCheck);
+  return { text: out, translated, hasResidualEnglish };
+}
+
+function extractDoctorTag(reportText) {
+  const m = reportText.match(/(開單醫師|Reported by)\s*[:：]\s*([^\s　]+)/);
+  return m ? `醫師:${m[2]}` : null;
+}
+
+function buildNhiVisitDrafts(doc, person) {
+  return parseNhiVisitTable(doc).map(g => {
+    const parts = [];
+    if (g.mainDiagName) parts.push(`【主診斷】${g.mainDiagCode} ${g.mainDiagName}`);
+    if (g.mainProcName) parts.push(`【主處置】${g.mainProcCode} ${g.mainProcName}`);
+    if (g.subDiag.length) parts.push(`【次診斷】\n` + g.subDiag.map(s => `・${s}`).join("\n"));
+    if (g.subProc.length) parts.push(`【次處置】\n` + g.subProc.map(s => `・${s}`).join("\n"));
+    if (g.orders.length) parts.push(`【醫囑/處置項目】\n` + g.orders.map(s => `・${s}`).join("\n"));
+    const description = parts.join("\n\n");
+    const { text: safeDesc, hits } = redact(description);
+    return {
+      date: g.date, category: "visit", status: "done", person,
+      title: `${g.institution}｜${g.mainDiagName || g.mainProcName || "門診"}`.slice(0, 36),
+      description: safeDesc, tags: [g.institution].filter(Boolean), hits, include: true,
+      sourceKey: `nhi:visit:${g.date}:${g.institution}:${g.mainDiagCode}`
+    };
+  });
+}
+
+function buildNhiMedDrafts(doc, person) {
+  return parseNhiMedTable(doc).map(g => {
+    const drugLines = g.drugs.map(d => `・${d.name}${d.drugClass ? "（" + d.drugClass + "）" : ""} － 給藥${d.days || "?"}天，總量${d.qty || "?"}`);
+    const description = [
+      g.diseaseName ? `【對應疾病】${g.diseaseCode} ${g.diseaseName}` : "",
+      drugLines.length ? `【用藥明細】\n${drugLines.join("\n")}` : ""
+    ].filter(Boolean).join("\n\n");
+    const { text: safeDesc, hits } = redact(description);
+    return {
+      date: g.date, category: "med", status: "done", person,
+      title: `${g.institution}｜用藥（${g.diseaseName || g.drugs[0]?.name || ""}）`.slice(0, 36),
+      description: safeDesc, tags: [g.institution].filter(Boolean), hits, include: true,
+      sourceKey: `nhi:med:${g.date}:${g.institution}`
+    };
+  });
+}
+
+function buildNhiImagingDrafts(doc, person) {
+  return parseNhiImagingTable(doc).map(g => {
+    const { text: translatedText, hasResidualEnglish } = translateNhiReportText(g.reportText);
+    const { text: safeDesc, hits } = redact(translatedText);
+    const doctorTag = extractDoctorTag(g.reportText);
+    const tags = [g.institution, doctorTag].filter(Boolean);
+    let description = safeDesc;
+    if (hasResidualEnglish) description = "⚠️ 部分內容為英文原文，系統未能自動對照翻譯，建議自行確認或詢問醫師。\n\n" + description;
+    return {
+      date: g.examDate || g.visitDate, category: "exam", status: "done", person,
+      title: `${g.institution}｜${g.orderName || "檢查報告"}`.slice(0, 36),
+      description, tags, hits, include: true,
+      sourceKey: `nhi:exam:${g.examDate || g.visitDate}:${g.institution}:${g.orderCode || g.orderName}`
+    };
+  });
+}
+
+function buildNhiLabDrafts(doc, person) {
+  return parseNhiLabTable(doc).map(g => {
+    const lines = g.items.map(it => `・${it.itemName}：${it.value}${it.unit && it.unit !== "無" ? " " + it.unit : ""}${it.ref && it.ref !== "[][]" && it.ref !== "[無][無]" ? "（參考值 " + it.ref + "）" : ""}`);
+    const description = `【檢驗項目共 ${g.items.length} 項】\n${lines.join("\n")}`;
+    const { text: safeDesc, hits } = redact(description);
+    return {
+      date: g.examDate, category: "exam", status: "done", person,
+      title: `${g.institution}｜檢驗結果（${g.items.length}項）`.slice(0, 36),
+      description: safeDesc, tags: [g.institution].filter(Boolean), hits, include: true,
+      sourceKey: `nhi:lab:${g.examDate}:${g.institution}`
+    };
+  });
+}
+
+function buildNhiDrafts(doc, person) {
+  const kind = detectNhiKind(doc);
+  if (kind === "visit") return buildNhiVisitDrafts(doc, person);
+  if (kind === "med") return buildNhiMedDrafts(doc, person);
+  if (kind === "imaging") return buildNhiImagingDrafts(doc, person);
+  if (kind === "lab") return buildNhiLabDrafts(doc, person);
+  return null; // 無法辨識的檔案
+}
+
 function renderDraftList() {
   const wrap = $("#import-summary");
   const list = $("#draft-list");
@@ -790,10 +1094,12 @@ function renderDraftList() {
   }
   wrap.style.display = "block";
   const maskedCount = draftEntries.filter(d => d.hits > 0).length;
+  const dupCount = draftEntries.filter(d => d.duplicate).length;
   $("#import-summary-title").textContent = `解析出 ${draftEntries.length} 筆候選紀錄`;
-  $("#import-summary-desc").textContent = maskedCount
-    ? `其中 ${maskedCount} 筆偵測到疑似敏感資料已自動遮蔽，請確認內容後再儲存。可勾選要儲存的項目、調整日期與分類。`
-    : `請確認內容後勾選要儲存的項目，可個別調整日期、分類與標籤。`;
+  const descBits = [];
+  if (maskedCount) descBits.push(`${maskedCount} 筆偵測到疑似敏感資料已自動遮蔽`);
+  if (dupCount) descBits.push(`${dupCount} 筆與現有資料重複，已預設不勾選`);
+  $("#import-summary-desc").textContent = (descBits.length ? descBits.join("；") + "。" : "") + "請確認內容後勾選要儲存的項目，可個別調整日期、分類與標籤。";
 
   list.innerHTML = draftEntries.map((d, i) => `
     <div class="draft-card ${d.include ? "" : "skip"}" data-i="${i}">
@@ -802,7 +1108,10 @@ function renderDraftList() {
           <input type="checkbox" class="draft-include" data-i="${i}" ${d.include ? "checked" : ""}/>
           ${escapeHtml(d.title)}
         </label>
-        ${d.hits ? '<span class="tag-pill" style="background:#FFE8CC;color:#7A4A00;">⚠ 已遮蔽敏感資料</span>' : ""}
+        <span style="display:flex; gap:6px;">
+          ${d.duplicate ? '<span class="tag-pill" style="background:#E5E5EA;color:#6E6E73;">↺ 已存在，略過</span>' : ""}
+          ${d.hits ? '<span class="tag-pill" style="background:#FFE8CC;color:#7A4A00;">⚠ 已遮蔽敏感資料</span>' : ""}
+        </span>
       </div>
       <div class="draft-fields">
         <select class="draft-person" data-i="${i}">
@@ -879,12 +1188,14 @@ $("#save-drafts-btn").addEventListener("click", async () => {
   let ok = 0;
   for (const d of toSave) {
     try {
-      await addDoc(collection(db, appConfig.recordsCollection), {
+      const payload = {
         date: d.date, time: "", title: d.title, description: d.description,
         tags: d.tags || [], category: d.category, status: d.status, person: d.person || "other",
-        attachmentCount: 0, source: "gpt-import", createdBy: currentUser(),
+        attachmentCount: 0, source: d.sourceKey ? "nhi-import" : "gpt-import", createdBy: currentUser(),
         createdAt: serverTimestamp(), updatedAt: serverTimestamp()
-      });
+      };
+      if (d.sourceKey) payload.sourceKey = d.sourceKey;
+      await addDoc(collection(db, appConfig.recordsCollection), payload);
       ok++;
     } catch (err) { console.error(err); }
   }
@@ -892,6 +1203,7 @@ $("#save-drafts-btn").addEventListener("click", async () => {
   draftEntries = [];
   $("#import-summary").style.display = "none";
   $("#import-textarea").value = "";
+  $("#nhi-file-status").textContent = "";
   setRoute("timeline");
 });
 
@@ -914,6 +1226,73 @@ function readImportFile(file) {
   reader.onload = () => { $("#import-textarea").value = String(reader.result).replace(/^\uFEFF/, ""); };
   reader.readAsText(file);
 }
+
+// ---- 健保快易通檔案 dropzone ----
+let nhiFiles = [];
+const nhiDropzone = $("#nhi-dropzone");
+nhiDropzone.addEventListener("click", () => $("#nhi-file-input").click());
+nhiDropzone.addEventListener("dragover", (e) => { e.preventDefault(); nhiDropzone.classList.add("drag"); });
+nhiDropzone.addEventListener("dragleave", () => nhiDropzone.classList.remove("drag"));
+nhiDropzone.addEventListener("drop", (e) => {
+  e.preventDefault(); nhiDropzone.classList.remove("drag");
+  addNhiFiles(e.dataTransfer.files);
+});
+$("#nhi-file-input").addEventListener("change", (e) => { addNhiFiles(e.target.files); e.target.value = ""; });
+function addNhiFiles(fileList) {
+  nhiFiles = nhiFiles.concat(Array.from(fileList));
+  $("#nhi-file-status").textContent = nhiFiles.length ? `已選取 ${nhiFiles.length} 個檔案：${nhiFiles.map(f => f.name).join("、")}` : "";
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).replace(/^\uFEFF/, ""));
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+async function fetchExistingNhiSourceKeys() {
+  try {
+    const snap = await getDocs(query(collection(db, appConfig.recordsCollection), where("source", "==", "nhi-import")));
+    return new Set(snap.docs.map(d => d.data().sourceKey).filter(Boolean));
+  } catch (err) {
+    console.error(err);
+    return new Set();
+  }
+}
+
+$("#nhi-parse-btn").addEventListener("click", async () => {
+  if (!nhiFiles.length) { toast("請先選取或拖曳健保快易通匯出的 HTML 檔案"); return; }
+  const person = $("#nhi-person").value;
+  $("#nhi-file-status").textContent = "解析中…";
+  let allDrafts = [];
+  let unrecognized = [];
+  for (const file of nhiFiles) {
+    try {
+      const text = await readFileAsText(file);
+      const doc = new DOMParser().parseFromString(text, "text/html");
+      const drafts = buildNhiDrafts(doc, person);
+      if (drafts === null) { unrecognized.push(file.name); continue; }
+      allDrafts = allDrafts.concat(drafts);
+    } catch (err) {
+      console.error(err);
+      unrecognized.push(file.name);
+    }
+  }
+  if (unrecognized.length) toast(`無法辨識檔案格式：${unrecognized.join("、")}`);
+
+  const existingKeys = await fetchExistingNhiSourceKeys();
+  allDrafts.forEach(d => {
+    if (d.sourceKey && existingKeys.has(d.sourceKey)) { d.duplicate = true; d.include = false; }
+  });
+  allDrafts.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
+  draftEntries = allDrafts;
+  $("#nhi-file-status").textContent = `已解析 ${nhiFiles.length} 個檔案，共 ${allDrafts.length} 筆候選紀錄`;
+  nhiFiles = [];
+  renderDraftList();
+});
 
 // ============================================================================
 // Boot
