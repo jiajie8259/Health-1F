@@ -316,6 +316,13 @@ function renderCounts() {
 // ----------------------------------------------------------------------------
 // Timeline view
 // ----------------------------------------------------------------------------
+// 從紀錄推導「就診場所」：健保匯入的紀錄第一個標籤就是機構名稱；
+// 手動/GPT 紀錄沒有這個資訊來源，回傳 null，讓呼叫端自行決定如何顯示。
+function derivePlace(record) {
+  if (record.source === "nhi-import" && record.tags && record.tags[0]) return record.tags[0];
+  return null;
+}
+
 function renderTimeline() {
   const el = $("#timeline-view");
   const recs = filteredRecords();
@@ -341,11 +348,13 @@ function renderTimeline() {
       yearDivider = `<div class="h-year-divider"><span class="yd-icon">📅</span><span class="yd-years">${label}</span></div>`;
       lastYear = year;
     }
+    const places = [...new Set(items.map(derivePlace).filter(Boolean))];
+    const placeText = places.length ? (places.length > 2 ? `${places.slice(0, 2).join("、")}等` : places.join("、")) : `${items.length}筆`;
     return `${yearDivider}
       <div class="h-timeline-marker ${active ? "active" : ""}" data-date="${date}">
         <div class="date-label">${fmtShortDate(date)}</div>
         <div class="h-dots">${cats.slice(0, 4).map(c => `<span class="dot" style="background:var(--c-${c})"></span>`).join("")}</div>
-        <div class="h-count">${items.length}筆</div>
+        <div class="h-place" title="${escapeHtml(placeText)}">${escapeHtml(placeText)}</div>
       </div>`;
   }).join("");
 
