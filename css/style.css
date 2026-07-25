@@ -472,7 +472,19 @@ button.ghost {
 /* ==========================================================================
    Import page
    ========================================================================== */
+.import-row { display: flex; gap: 20px; align-items: flex-start; margin-bottom: 20px; flex-wrap: wrap; }
+.import-row .import-panel { flex: 1; min-width: 320px; margin-bottom: 0; }
 .import-panel { background: var(--card-bg); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); padding: 22px 24px; margin-bottom: 20px; }
+.danger-zone {
+  margin-top: 16px; padding: 12px 14px;
+  background: var(--c-symptom-bg); border: 1px solid rgba(255,59,48,0.22); border-radius: var(--radius-sm);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.danger-zone-label { font-size: 11px; font-weight: 800; color: var(--c-symptom); text-transform: uppercase; letter-spacing: 0.3px; flex-shrink: 0; }
+.danger-zone select {
+  padding: 7px 9px; border-radius: 8px; border: 1px solid var(--divider); background: var(--bg-elevated); font-size: 12.5px;
+}
+.danger-zone .danger-link { padding: 0; }
 .import-panel h3 { font-size: 15px; margin: 0 0 6px; }
 .import-panel .desc { font-size: 12.5px; color: var(--text-secondary); margin: 0 0 14px; line-height: 1.6; }
 .dropzone {
@@ -517,6 +529,8 @@ button.ghost {
   .top-row { flex-direction: column; }
   .filters-panel { min-width: 0; padding: 12px 16px; }
   .filter-row-label { width: 28px; }
+  .import-row { flex-direction: column; }
+  .import-row .import-panel { min-width: 0; }
   .rings-svg { width: 76px; height: 76px; }
   .list-table { display: block; overflow-x: auto; white-space: nowrap; }
   .draft-fields { grid-template-columns: 1fr; }
