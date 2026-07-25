@@ -329,11 +329,18 @@ function renderTimeline() {
 
   if (!selectedTimelineDate || !groups[selectedTimelineDate]) selectedTimelineDate = dates[0];
 
+  let lastYear = null;
   const stripHtml = dates.map(date => {
     const items = groups[date];
     const cats = [...new Set(items.map(i => i.category))];
     const active = date === selectedTimelineDate;
-    return `
+    const year = date.slice(0, 4);
+    let yearDivider = "";
+    if (year !== lastYear) {
+      yearDivider = `<div class="h-year-divider"><span>${year}</span></div>`;
+      lastYear = year;
+    }
+    return `${yearDivider}
       <div class="h-timeline-marker ${active ? "active" : ""}" data-date="${date}">
         <div class="date-label">${fmtShortDate(date)}</div>
         <div class="h-dots">${cats.slice(0, 4).map(c => `<span class="dot" style="background:var(--c-${c})"></span>`).join("")}</div>
