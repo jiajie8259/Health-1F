@@ -337,7 +337,8 @@ function renderTimeline() {
     const year = date.slice(0, 4);
     let yearDivider = "";
     if (year !== lastYear) {
-      yearDivider = `<div class="h-year-divider"><span>${year}</span></div>`;
+      const label = lastYear ? `${lastYear}年 ｜ ${year}年` : `${year}年`;
+      yearDivider = `<div class="h-year-divider"><span class="yd-icon">📅</span><span class="yd-years">${label}</span></div>`;
       lastYear = year;
     }
     return `${yearDivider}
