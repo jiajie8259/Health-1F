@@ -18,9 +18,11 @@ const db = getFirestore(app);
 // Constants
 // ----------------------------------------------------------------------------
 const CATEGORY_LABELS = { symptom: "症狀", visit: "就診", exam: "檢查", med: "用藥", note: "備註" };
+const SELECTABLE_CATEGORIES = ["symptom", "visit", "exam", "med"]; // 備註已停用，僅保留 CATEGORY_LABELS.note 供舊資料顯示
 const CATEGORY_ICONS = { symptom: "🩹", visit: "🏥", exam: "🔬", med: "💊", note: "📝" };
 const STATUS_LABELS = { active: "治療中", tracking: "追蹤中", done: "已完成" };
 const PERSON_LABELS = { mother: "媽媽", father: "爸爸", other: "其他" };
+const SELECTABLE_PERSONS = ["mother", "father"]; // 其他已停用，僅保留 PERSON_LABELS.other 供舊資料顯示
 const ATTACH_MAX_BYTES = 700 * 1024; // 單一附件上限（base64 編碼後），確保單一 Firestore 文件不超過大小限制
 const ATTACHMENTS_COLLECTION = "attachments";
 
@@ -734,7 +736,7 @@ function guessCategory(text) {
   for (const cat of Object.keys(KEYWORDS)) {
     if (KEYWORDS[cat].some(kw => text.includes(kw))) return cat;
   }
-  return "note";
+  return "symptom"; // 備註分類已停用，找不到關鍵字時歸類為症狀
 }
 
 function guessDate(text, fallbackDate) {
@@ -1228,11 +1230,11 @@ function renderDraftList() {
       </div>
       <div class="draft-fields">
         <select class="draft-person" data-i="${i}">
-          ${Object.keys(PERSON_LABELS).map(p => `<option value="${p}" ${p === (d.person || "other") ? "selected" : ""}>${PERSON_LABELS[p]}</option>`).join("")}
+          ${SELECTABLE_PERSONS.map(p => `<option value="${p}" ${p === (d.person || "mother") ? "selected" : ""}>${PERSON_LABELS[p]}</option>`).join("")}
         </select>
         <input type="date" class="draft-date" data-i="${i}" value="${d.date}" />
         <select class="draft-cat" data-i="${i}">
-          ${Object.keys(CATEGORY_LABELS).map(c => `<option value="${c}" ${c === d.category ? "selected" : ""}>${CATEGORY_LABELS[c]}</option>`).join("")}
+          ${SELECTABLE_CATEGORIES.map(c => `<option value="${c}" ${c === d.category ? "selected" : ""}>${CATEGORY_LABELS[c]}</option>`).join("")}
         </select>
         <select class="draft-status" data-i="${i}">
           ${Object.keys(STATUS_LABELS).map(s => `<option value="${s}" ${s === d.status ? "selected" : ""}>${STATUS_LABELS[s]}</option>`).join("")}
@@ -1374,6 +1376,27 @@ async function fetchExistingNhiSourceKeys() {
     return new Set();
   }
 }
+
+$("#gpt-clear-old-btn").addEventListener("click", async () => {
+  const person = $("#gpt-clear-person").value;
+  const personLabel = PERSON_LABELS[person] || person;
+  if (!confirm(`確定要刪除「${personLabel}」所有「GPT 對話匯入」的紀錄嗎？\n\n手動新增和健保快易通匯入的紀錄不會受影響，但已刪除的資料無法復原。`)) return;
+  $("#gpt-clear-status").textContent = "刪除中…";
+  try {
+    const snap = await getDocs(query(
+      collection(db, appConfig.recordsCollection),
+      where("source", "==", "gpt-import"),
+      where("person", "==", person)
+    ));
+    await Promise.all(snap.docs.map(d => deleteDoc(doc(db, appConfig.recordsCollection, d.id))));
+    $("#gpt-clear-status").textContent = `已刪除 ${snap.docs.length} 筆「${personLabel}」的 GPT 匯入舊資料`;
+    toast(`已刪除 ${snap.docs.length} 筆舊資料`);
+  } catch (err) {
+    console.error(err);
+    $("#gpt-clear-status").textContent = "";
+    toast("刪除失敗，請稍後再試");
+  }
+});
 
 $("#nhi-clear-old-btn").addEventListener("click", async () => {
   const person = $("#nhi-person").value;
