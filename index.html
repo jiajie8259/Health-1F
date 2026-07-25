@@ -73,20 +73,49 @@
         </div>
       </div>
 
-      <div class="rings-card">
-        <svg class="rings-svg" id="rings-svg" viewBox="0 0 100 100"></svg>
-        <div class="rings-legend">
-          <div class="ring-stat">
-            <span class="ring-dot" style="background:var(--status-active)"></span>
-            <div><div class="ring-stat-num" id="count-active">0</div><div class="ring-stat-label">治療中</div></div>
+      <div class="top-row">
+        <div class="rings-card">
+          <svg class="rings-svg" id="rings-svg" viewBox="0 0 100 100"></svg>
+          <div class="rings-legend">
+            <div class="ring-stat">
+              <span class="ring-dot" style="background:var(--status-active)"></span>
+              <div><div class="ring-stat-num" id="count-active">0</div><div class="ring-stat-label">治療中</div></div>
+            </div>
+            <div class="ring-stat">
+              <span class="ring-dot" style="background:var(--status-tracking)"></span>
+              <div><div class="ring-stat-num" id="count-tracking">0</div><div class="ring-stat-label">追蹤中</div></div>
+            </div>
+            <div class="ring-stat">
+              <span class="ring-dot" style="background:var(--status-done)"></span>
+              <div><div class="ring-stat-num" id="count-done">0</div><div class="ring-stat-label">已完成</div></div>
+            </div>
           </div>
-          <div class="ring-stat">
-            <span class="ring-dot" style="background:var(--status-tracking)"></span>
-            <div><div class="ring-stat-num" id="count-tracking">0</div><div class="ring-stat-label">追蹤中</div></div>
+        </div>
+
+        <div class="filters-panel">
+          <div class="filter-row">
+            <span class="filter-row-label">家人</span>
+            <div class="chip-row" id="person-chips">
+              <div class="chip" data-person="mother"><span class="dot" style="background:var(--c-mother)"></span>媽媽</div>
+              <div class="chip" data-person="father"><span class="dot" style="background:var(--c-father)"></span>爸爸</div>
+            </div>
           </div>
-          <div class="ring-stat">
-            <span class="ring-dot" style="background:var(--status-done)"></span>
-            <div><div class="ring-stat-num" id="count-done">0</div><div class="ring-stat-label">已完成</div></div>
+          <div class="filter-row">
+            <span class="filter-row-label">分類</span>
+            <div class="chip-row" id="category-chips">
+              <div class="chip" data-cat="symptom"><span class="dot" style="background:var(--c-symptom)"></span>症狀</div>
+              <div class="chip" data-cat="visit"><span class="dot" style="background:var(--c-visit)"></span>就診</div>
+              <div class="chip" data-cat="exam"><span class="dot" style="background:var(--c-exam)"></span>檢查</div>
+              <div class="chip" data-cat="med"><span class="dot" style="background:var(--c-med)"></span>用藥</div>
+            </div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-row-label">狀態</span>
+            <div class="chip-row" id="status-chips">
+              <div class="chip" data-status="active"><span class="dot" style="background:var(--status-active)"></span>治療中</div>
+              <div class="chip" data-status="tracking"><span class="dot" style="background:var(--status-tracking)"></span>追蹤中</div>
+              <div class="chip" data-status="done"><span class="dot" style="background:var(--status-done)"></span>已完成</div>
+            </div>
           </div>
         </div>
       </div>
@@ -96,24 +125,6 @@
           <button data-view="timeline" class="active">時間軸</button>
           <button data-view="list">清單</button>
         </div>
-      </div>
-
-      <div class="chip-row" id="person-chips">
-        <div class="chip" data-person="mother"><span class="dot" style="background:var(--c-mother)"></span>媽媽</div>
-        <div class="chip" data-person="father"><span class="dot" style="background:var(--c-father)"></span>爸爸</div>
-        <div class="chip" data-person="other"><span class="dot" style="background:var(--c-note)"></span>其他</div>
-      </div>
-      <div class="chip-row" id="category-chips">
-        <div class="chip" data-cat="symptom"><span class="dot" style="background:var(--c-symptom)"></span>症狀</div>
-        <div class="chip" data-cat="visit"><span class="dot" style="background:var(--c-visit)"></span>就診</div>
-        <div class="chip" data-cat="exam"><span class="dot" style="background:var(--c-exam)"></span>檢查</div>
-        <div class="chip" data-cat="med"><span class="dot" style="background:var(--c-med)"></span>用藥</div>
-        <div class="chip" data-cat="note"><span class="dot" style="background:var(--c-note)"></span>備註</div>
-      </div>
-      <div class="chip-row" id="status-chips">
-        <div class="chip" data-status="active"><span class="dot" style="background:var(--status-active)"></span>治療中</div>
-        <div class="chip" data-status="tracking"><span class="dot" style="background:var(--status-tracking)"></span>追蹤中</div>
-        <div class="chip" data-status="done"><span class="dot" style="background:var(--status-done)"></span>已完成</div>
       </div>
 
       <div id="timeline-view"></div>
@@ -137,7 +148,6 @@
           <select id="nhi-person">
             <option value="mother">媽媽</option>
             <option value="father">爸爸</option>
-            <option value="other">其他</option>
           </select>
         </div>
         <div class="dropzone" id="nhi-dropzone">
@@ -164,6 +174,15 @@
           <button class="secondary" id="clear-import-btn">清除</button>
         </div>
         <div class="privacy-note">⚠️ 系統會自動偵測並遮蔽疑似身分證字號 / 電話號碼等格式，但仍請在儲存前逐筆確認內容，避免記錄不必要的敏感資料。</div>
+
+        <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--divider-soft); display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <select id="gpt-clear-person" style="padding:8px 10px; border-radius:10px; border:1px solid var(--divider); background:var(--bg); font-size:13px;">
+            <option value="mother">媽媽</option>
+            <option value="father">爸爸</option>
+          </select>
+          <button class="danger-link" id="gpt-clear-old-btn">清除此人「GPT 對話匯入」的舊資料</button>
+        </div>
+        <div id="gpt-clear-status" class="field-hint"></div>
       </div>
 
       <div id="import-summary" class="import-panel" style="display:none">
@@ -205,7 +224,6 @@
       <div class="cat-select" id="f-person">
         <button data-person="mother" type="button">媽媽</button>
         <button data-person="father" type="button">爸爸</button>
-        <button data-person="other" type="button">其他</button>
       </div>
     </div>
 
@@ -227,7 +245,6 @@
         <button data-cat="visit" type="button">🟠 就診</button>
         <button data-cat="exam" type="button">🔵 檢查</button>
         <button data-cat="med" type="button">🟣 用藥</button>
-        <button data-cat="note" type="button">⚪ 備註</button>
       </div>
     </div>
 
