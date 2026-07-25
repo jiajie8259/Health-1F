@@ -140,50 +140,65 @@
         </div>
       </div>
 
-      <div class="import-panel">
-        <h3>健保快易通資料匯入</h3>
-        <p class="desc">支援「健保快易通」App 匯出的門診資料、用藥資料、影像或病理檢查資料、檢驗檢查結果（HTML 格式）。可一次選取多個檔案，系統會自動判斷檔案類型並依時間軸整理。重複上傳同一批資料時，已存在的紀錄會自動偵測並預設不重複匯入。</p>
-        <div class="field" style="max-width:220px;">
-          <label>這批資料屬於</label>
-          <select id="nhi-person">
-            <option value="mother">媽媽</option>
-            <option value="father">爸爸</option>
-          </select>
+      <div class="import-row">
+        <div class="import-panel">
+          <h3>健保快易通資料匯入</h3>
+          <p class="desc">支援「健保快易通」App 匯出的門診資料、用藥資料、影像或病理檢查資料、檢驗檢查結果（HTML 格式）。可一次選取多個檔案，系統會自動判斷檔案類型並依時間軸整理。重複上傳同一批資料時，已存在的紀錄會自動偵測並預設不重複匯入。</p>
+          <div class="field" style="max-width:220px;">
+            <label>這批資料屬於</label>
+            <select id="nhi-person">
+              <option value="mother">媽媽</option>
+              <option value="father">爸爸</option>
+            </select>
+          </div>
+          <div class="dropzone" id="nhi-dropzone">
+            📄 拖曳一個或多個健保快易通 HTML 檔案到這裡，或點擊選擇檔案
+            <input type="file" id="nhi-file-input" accept=".html,.htm" multiple style="display:none" />
+          </div>
+          <div id="nhi-file-status" class="field-hint"></div>
+          <div style="margin-top:10px; display:flex; gap:10px;">
+            <button class="primary" id="nhi-parse-btn">解析健保資料</button>
+            <button class="secondary" id="nhi-clear-files-btn">清除已選檔案</button>
+          </div>
+          <div class="privacy-note">⚠️ 影像/病理報告內文常含有姓名、病歷號碼、出生日期，系統會自動偵測並遮蔽這些欄位；報告中的英文內容，系統會盡量附上中文參考翻譯，若無法對照則保留原文並標註提醒，請務必自行確認。</div>
+
+          <div class="danger-zone">
+            <span class="danger-zone-label">清除舊資料</span>
+            <select id="nhi-clear-person">
+              <option value="mother">媽媽</option>
+              <option value="father">爸爸</option>
+            </select>
+            <button class="danger-link" id="nhi-clear-old-btn">清除此人「舊版」健保匯入資料，重新開始</button>
+          </div>
+          <div id="nhi-clear-status" class="field-hint"></div>
         </div>
-        <div class="dropzone" id="nhi-dropzone">
-          📄 拖曳一個或多個健保快易通 HTML 檔案到這裡，或點擊選擇檔案
-          <input type="file" id="nhi-file-input" accept=".html,.htm" multiple style="display:none" />
+
+        <div class="import-panel">
+          <h3>GPT 對話匯入</h3>
+          <p class="desc">可上傳 ChatGPT 匯出的 conversations.json（設定 → 資料控制 → 匯出資料），或直接貼上對話文字。系統只會在瀏覽器內解析，不會上傳到任何第三方伺服器。</p>
+          <div class="dropzone" id="dropzone">
+            📄 拖曳 JSON 檔案到這裡，或點擊選擇檔案
+            <input type="file" id="file-input" accept=".json,.txt" style="display:none" />
+          </div>
+          <textarea class="import-textarea" id="import-textarea" placeholder="…或將對話文字貼在這裡"></textarea>
+          <div style="margin-top:10px; display:flex; gap:10px;">
+            <button class="primary" id="parse-btn">解析對話</button>
+            <button class="secondary" id="clear-import-btn">清除輸入內容</button>
+          </div>
+          <div class="privacy-note">⚠️ 系統會自動偵測並遮蔽疑似身分證字號 / 電話號碼等格式，但仍請在儲存前逐筆確認內容，避免記錄不必要的敏感資料。</div>
+
+          <div class="danger-zone">
+            <span class="danger-zone-label">清除舊資料</span>
+            <select id="gpt-clear-person">
+              <option value="mother">媽媽</option>
+              <option value="father">爸爸</option>
+            </select>
+            <button class="danger-link" id="gpt-clear-old-btn">清除此人「GPT 對話匯入」的舊資料</button>
+          </div>
+          <div id="gpt-clear-status" class="field-hint"></div>
         </div>
-        <div id="nhi-file-status" class="field-hint"></div>
-        <button class="primary" id="nhi-parse-btn" style="margin-top:8px;">解析健保資料</button>
-        <button class="danger-link" id="nhi-clear-old-btn" style="margin-top:8px; display:block;">清除此人「舊版」健保匯入資料，重新開始</button>
-        <div id="nhi-clear-status" class="field-hint"></div>
-        <div class="privacy-note">⚠️ 影像/病理報告內文常含有姓名、病歷號碼、出生日期，系統會自動偵測並遮蔽這些欄位；報告中的英文內容，系統會盡量附上中文參考翻譯，若無法對照則保留原文並標註提醒，請務必自行確認。</div>
       </div>
 
-      <div class="import-panel">
-        <h3>GPT 對話匯入</h3>
-        <p class="desc">可上傳 ChatGPT 匯出的 conversations.json（設定 → 資料控制 → 匯出資料），或直接貼上對話文字。系統只會在瀏覽器內解析，不會上傳到任何第三方伺服器。</p>
-        <div class="dropzone" id="dropzone">
-          📄 拖曳 JSON 檔案到這裡，或點擊選擇檔案
-          <input type="file" id="file-input" accept=".json,.txt" style="display:none" />
-        </div>
-        <textarea class="import-textarea" id="import-textarea" placeholder="…或將對話文字貼在這裡"></textarea>
-        <div style="margin-top:12px; display:flex; gap:10px;">
-          <button class="primary" id="parse-btn">解析對話</button>
-          <button class="secondary" id="clear-import-btn">清除</button>
-        </div>
-        <div class="privacy-note">⚠️ 系統會自動偵測並遮蔽疑似身分證字號 / 電話號碼等格式，但仍請在儲存前逐筆確認內容，避免記錄不必要的敏感資料。</div>
-
-        <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--divider-soft); display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-          <select id="gpt-clear-person" style="padding:8px 10px; border-radius:10px; border:1px solid var(--divider); background:var(--bg); font-size:13px;">
-            <option value="mother">媽媽</option>
-            <option value="father">爸爸</option>
-          </select>
-          <button class="danger-link" id="gpt-clear-old-btn">清除此人「GPT 對話匯入」的舊資料</button>
-        </div>
-        <div id="gpt-clear-status" class="field-hint"></div>
-      </div>
 
       <div id="import-summary" class="import-panel" style="display:none">
         <h3 id="import-summary-title">解析結果</h3>
