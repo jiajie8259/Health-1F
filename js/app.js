@@ -1357,6 +1357,10 @@ function addNhiFiles(fileList) {
   nhiFiles = nhiFiles.concat(Array.from(fileList));
   $("#nhi-file-status").textContent = nhiFiles.length ? `已選取 ${nhiFiles.length} 個檔案：${nhiFiles.map(f => f.name).join("、")}` : "";
 }
+$("#nhi-clear-files-btn").addEventListener("click", () => {
+  nhiFiles = [];
+  $("#nhi-file-status").textContent = "";
+});
 
 function readFileAsText(file) {
   return new Promise((resolve, reject) => {
@@ -1399,7 +1403,7 @@ $("#gpt-clear-old-btn").addEventListener("click", async () => {
 });
 
 $("#nhi-clear-old-btn").addEventListener("click", async () => {
-  const person = $("#nhi-person").value;
+  const person = $("#nhi-clear-person").value;
   const personLabel = PERSON_LABELS[person] || person;
   if (!confirm(`確定要刪除「${personLabel}」所有健保快易通匯入的紀錄嗎？\n\n手動新增和 GPT 對話匯入的紀錄不會受影響，但已刪除的健保資料無法復原。刪除後請重新選取檔案並按「解析健保資料」重新匯入。`)) return;
   $("#nhi-clear-status").textContent = "刪除中…";
