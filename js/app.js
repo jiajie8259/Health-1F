@@ -1183,19 +1183,36 @@ function buildMergedNhiDraft(cluster, person) {
   };
 }
 
+// 合併同一天、同一機構、同一檢查代碼的影像/病理原始資料。
+// 健保資料裡同一份報告有時會被重複記錄好幾筆（跟連續處方箋是類似現象），
+// 完全相同的報告文字只保留一份；內容不同的段落（例如詳細所見＋簡短結論）則合併呈現。
+function mergeNhiImagingGroups(rawGroups) {
+  const clusters = {};
+  rawGroups.forEach(g => {
+    const date = g.examDate || g.visitDate;
+    const key = `${g.institution}::${date}::${g.orderCode || g.orderName}`;
+    clusters[key] = clusters[key] || { institution: g.institution, date, orderCode: g.orderCode, orderName: g.orderName, reportTexts: [] };
+    if (g.reportText && !clusters[key].reportTexts.includes(g.reportText)) clusters[key].reportTexts.push(g.reportText);
+  });
+  return Object.values(clusters);
+}
+
 function buildNhiImagingDrafts(doc, person) {
-  return parseNhiImagingTable(doc).map(g => {
-    const { text: translatedText, hasResidualEnglish } = translateNhiReportText(g.reportText);
+  const clusters = mergeNhiImagingGroups(parseNhiImagingTable(doc));
+  return clusters.map(c => {
+    const combinedReport = c.reportTexts.join("\n\n");
+    const { text: translatedText, hasResidualEnglish } = translateNhiReportText(combinedReport);
     const { text: safeDesc, hits } = redact(translatedText);
-    const doctorTag = extractDoctorTag(g.reportText);
-    const tags = [g.institution, doctorTag].filter(Boolean);
+    const doctorTag = extractDoctorTag(combinedReport);
+    const tags = [c.institution, doctorTag].filter(Boolean);
     let description = safeDesc;
+    if (c.reportTexts.length > 1) description = `（此檢查在健保資料中有 ${c.reportTexts.length} 段報告內容，已合併呈現）\n\n` + description;
     if (hasResidualEnglish) description = "⚠️ 部分內容為英文原文，系統未能自動對照翻譯，建議自行確認或詢問醫師。\n\n" + description;
     return {
-      date: g.examDate || g.visitDate, category: "exam", status: "done", person,
-      title: `${g.institution}｜${g.orderName || "檢查報告"}`.slice(0, 36),
+      date: c.date, category: "exam", status: "done", person,
+      title: `${c.institution}｜${c.orderName || "檢查報告"}`.slice(0, 36),
       description, tags, hits, include: true,
-      sourceKey: `nhi:exam:${g.examDate || g.visitDate}:${g.institution}:${g.orderCode || g.orderName}`
+      sourceKey: `nhi:exam:${c.date}:${c.institution}:${c.orderCode || c.orderName}`
     };
   });
 }
