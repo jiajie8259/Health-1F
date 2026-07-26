@@ -349,18 +349,27 @@ function renderTimeline() {
       lastYear = year;
     }
     const places = [...new Set(items.map(derivePlace).filter(Boolean))];
-    const placeText = places.length ? (places.length > 2 ? `${places.slice(0, 2).join("、")}等` : places.join("、")) : `${items.length}筆`;
+    const mainDiag = items.map(i => i.meta && i.meta.mainDiagnosis).find(Boolean);
+    const doctor = items.map(i => i.meta && i.meta.doctor).find(Boolean);
+    const isRefill = items.some(i => i.meta && i.meta.isRefill);
+    const headline = mainDiag || (places.length ? (places.length > 2 ? `${places.slice(0, 2).join("、")}等` : places.join("、")) : `${items.length}筆`);
+    const badgeBits = [];
+    if (isRefill) badgeBits.push(`<span class="h-badge refill">🔁連續處方</span>`);
+    if (doctor) badgeBits.push(`<span class="h-badge doctor">👨‍⚕️${escapeHtml(doctor)}</span>`);
     return `${yearDivider}
       <div class="h-timeline-marker ${active ? "active" : ""}" data-date="${date}">
         <div class="date-label">${fmtShortDate(date)}</div>
         <div class="h-dots">${cats.slice(0, 4).map(c => `<span class="dot" style="background:var(--c-${c})"></span>`).join("")}</div>
-        <div class="h-place" title="${escapeHtml(placeText)}">${escapeHtml(placeText)}</div>
+        <div class="h-place" title="${escapeHtml(headline)}">${escapeHtml(headline)}</div>
+        ${badgeBits.length ? `<div class="h-badges">${badgeBits.join("")}</div>` : ""}
       </div>`;
   }).join("");
 
   const detailItems = groups[selectedTimelineDate] || [];
+  const summaryHtml = daySummaryHtml(detailItems);
   const detailHtml = `
     <div class="timeline-date-label">${fmtDateLabel(selectedTimelineDate)}</div>
+    ${summaryHtml}
     ${detailItems.map(cardHtml).join("")}
   `;
 
@@ -381,6 +390,27 @@ function renderTimeline() {
   el.querySelectorAll(".record-card").forEach(card => {
     card.addEventListener("click", () => openEditModal(card.dataset.id));
   });
+}
+
+// 當天的簡要摘要（開單醫師／連續處方箋／主診斷／次診斷／醫囑／用藥），
+// 只在有明確資料時才顯示對應那一行；完全沒有 meta 資訊的紀錄（手動/GPT）不會出現在這裡。
+function daySummaryHtml(items) {
+  const metaItems = items.filter(i => i.meta && (i.meta.mainDiagnosis || i.meta.doctor || i.meta.isRefill || (i.meta.subDiagnosis && i.meta.subDiagnosis.length) || (i.meta.orders && i.meta.orders.length) || (i.meta.medications && i.meta.medications.length)));
+  if (!metaItems.length) return "";
+  const row = (label, val) => val ? `<div class="ds-row"><span class="ds-label">${label}</span><span class="ds-val">${val}</span></div>` : "";
+  return `<div class="day-summary">
+    ${metaItems.map(r => `
+      <div class="day-summary-card">
+        <div class="ds-title">${escapeHtml(r.title)}</div>
+        ${row("開單醫師", r.meta.doctor ? escapeHtml(r.meta.doctor) : "")}
+        ${row("連續處方箋", r.meta.isRefill ? `是（共 ${r.meta.refillCount} 次調劑）` : "")}
+        ${row("主診斷", r.meta.mainDiagnosis ? escapeHtml(r.meta.mainDiagnosis) : "")}
+        ${row("次診斷", (r.meta.subDiagnosis || []).length ? r.meta.subDiagnosis.map(escapeHtml).join("、") : "")}
+        ${row("醫囑", (r.meta.orders || []).length ? r.meta.orders.map(escapeHtml).join("、") : "")}
+        ${row("用藥", (r.meta.medications || []).length ? r.meta.medications.map(escapeHtml).join("、") : "")}
+      </div>
+    `).join("")}
+  </div>`;
 }
 
 function cardHtml(r) {
@@ -1119,6 +1149,10 @@ function extractDoctorTag(reportText) {
   const m = reportText.match(/(開單醫師|Reported by)\s*[:：]\s*([^\s　]+)/);
   return m ? `醫師:${m[2]}` : null;
 }
+function extractDoctorName(reportText) {
+  const m = reportText.match(/(開單醫師|Reported by)\s*[:：]\s*([^\s　]+)/);
+  return m ? m[2] : null;
+}
 
 // 合併同一天、同一機構、同一診斷碼的「門診」與「用藥」原始資料
 // （健保「慢性病連續處方箋」會把同一次看診的每次調劑各記一筆 claim，
@@ -1175,11 +1209,21 @@ function buildMergedNhiDraft(cluster, person) {
   const category = v ? "visit" : "med";
   const titlePrefix = v ? "" : "用藥（";
   const titleSuffix = v ? "" : "）";
+  const drugSummaryLines = [...drugMap.values()].map(d => `${d.name} － 每次${d.days || "?"}天，總量${d.qty || "?"}`);
   return {
     date: cluster.date, category, status: "done", person,
     title: `${cluster.institution}｜${titlePrefix}${diagName}${titleSuffix}`.slice(0, 36),
     description: safeDesc, tags: [cluster.institution].filter(Boolean), hits, include: true,
-    sourceKey: `nhi:visit:${cluster.date}:${cluster.institution}:${cluster.diagCode}`
+    sourceKey: `nhi:visit:${cluster.date}:${cluster.institution}:${cluster.diagCode}`,
+    meta: {
+      mainDiagnosis: diagName || null,
+      subDiagnosis: [...subDiag],
+      orders: [...orders],
+      medications: drugSummaryLines,
+      isRefill: refillCount > 1,
+      refillCount: refillCount > 1 ? refillCount : null,
+      doctor: null // 健保門診/用藥資料本身沒有醫師欄位，僅影像/病理報告有時會附
+    }
   };
 }
 
@@ -1212,7 +1256,8 @@ function buildNhiImagingDrafts(doc, person) {
       date: c.date, category: "exam", status: "done", person,
       title: `${c.institution}｜${c.orderName || "檢查報告"}`.slice(0, 36),
       description, tags, hits, include: true,
-      sourceKey: `nhi:exam:${c.date}:${c.institution}:${c.orderCode || c.orderName}`
+      sourceKey: `nhi:exam:${c.date}:${c.institution}:${c.orderCode || c.orderName}`,
+      meta: { doctor: extractDoctorName(combinedReport), mainDiagnosis: null, subDiagnosis: [], orders: [], medications: [], isRefill: false, refillCount: null }
     };
   });
 }
@@ -1344,6 +1389,7 @@ $("#save-drafts-btn").addEventListener("click", async () => {
         createdAt: serverTimestamp(), updatedAt: serverTimestamp()
       };
       if (d.sourceKey) payload.sourceKey = d.sourceKey;
+      if (d.meta) payload.meta = d.meta;
       await addDoc(collection(db, appConfig.recordsCollection), payload);
       ok++;
     } catch (err) { console.error(err); }
