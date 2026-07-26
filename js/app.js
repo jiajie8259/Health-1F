@@ -1542,6 +1542,309 @@ $("#nhi-parse-btn").addEventListener("click", async () => {
 });
 
 // ============================================================================
+// 健康存摺 JSON 匯入（單一檔案，涵蓋門診/用藥/檢驗/影像/過敏/疫苗/健檢/癌篩）
+// ============================================================================
+function hbIsoDate(yyyymmdd) {
+  if (!yyyymmdd || String(yyyymmdd).length !== 8) return null;
+  const s = String(yyyymmdd);
+  return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+}
+
+function isHealthBankJson(json) {
+  return !!(json && json.myhealthbank && json.myhealthbank.bdata);
+}
+
+// ---- r1: 門診（每筆已同時包含診斷與醫囑/用藥項目，不需要再跨檔比對）----
+function parseHbVisits(bdata) {
+  const raw = bdata.r1 || [];
+  if (!Array.isArray(raw)) return [];
+  return raw.map(v => {
+    const subDiag = [];
+    for (let i = 14; i <= 26; i += 2) {
+      const code = v[`r1.${i}`], name = v[`r1.${i + 1}`];
+      if (code || name) subDiag.push(`${code || ""} ${name || ""}`.trim());
+    }
+    const orders = [], drugs = [];
+    (v.r1_1 || []).forEach(item => {
+      const days = item["r1_1.4"];
+      const name = item["r1_1.2"];
+      if (!name) return;
+      if (days && days !== "0") drugs.push({ name, qty: item["r1_1.3"], days });
+      else orders.push(name);
+    });
+    return {
+      institution: v["r1.4"] || "", date: hbIsoDate(v["r1.5"]),
+      mainDiagCode: v["r1.8"] || "", mainDiagName: v["r1.9"] || "",
+      subDiag, orders, drugs
+    };
+  }).filter(v => v.date);
+}
+
+function mergeHbVisits(rawGroups) {
+  const clusters = {};
+  rawGroups.forEach(g => {
+    const key = `${g.institution}::${g.date}::${g.mainDiagCode}`;
+    clusters[key] = clusters[key] || {
+      institution: g.institution, date: g.date, diagCode: g.mainDiagCode, mainDiagName: g.mainDiagName,
+      subDiag: new Set(), orders: new Set(), drugMap: new Map(), count: 0
+    };
+    const c = clusters[key];
+    c.count++;
+    g.subDiag.forEach(s => c.subDiag.add(s));
+    g.orders.forEach(o => c.orders.add(o));
+    g.drugs.forEach(d => {
+      const dk = `${d.name}__${d.days}__${d.qty}`;
+      if (!c.drugMap.has(dk)) c.drugMap.set(dk, d);
+    });
+  });
+  return Object.values(clusters);
+}
+
+function buildHbVisitDrafts(bdata, person) {
+  const clusters = mergeHbVisits(parseHbVisits(bdata));
+  return clusters.map(c => {
+    const subDiag = [...c.subDiag], orders = [...c.orders], drugList = [...c.drugMap.values()];
+    const parts = [];
+    if (c.count > 1) parts.push(`（本次為連續處方箋，健保資料顯示共 ${c.count} 次調劑紀錄，已自動合併為一筆）`);
+    if (c.mainDiagName) parts.push(`【主診斷】${c.diagCode} ${c.mainDiagName}`);
+    if (subDiag.length) parts.push(`【次診斷】\n` + subDiag.map(s => `・${s}`).join("\n"));
+    if (orders.length) parts.push(`【醫囑/處置項目】\n` + orders.map(s => `・${s}`).join("\n"));
+    const drugLines = drugList.map(d => `・${d.name} － 每次${d.days || "?"}天，總量${d.qty || "?"}`);
+    if (drugLines.length) parts.push(`【用藥】\n` + drugLines.join("\n"));
+    const description = parts.join("\n\n");
+    const { text: safeDesc, hits } = redact(description);
+    const category = drugList.length && !orders.length && !c.mainDiagName ? "med" : "visit";
+    return {
+      date: c.date, category, status: "done", person,
+      title: `${c.institution}｜${c.mainDiagName || "門診"}`.slice(0, 36),
+      description: safeDesc, tags: [c.institution].filter(Boolean), hits, include: true,
+      sourceKey: `nhi:visit:${c.date}:${c.institution}:${c.diagCode}`,
+      meta: {
+        mainDiagnosis: c.mainDiagName || null, subDiagnosis: subDiag, orders,
+        medications: drugList.map(d => `${d.name} － 每次${d.days || "?"}天，總量${d.qty || "?"}`),
+        isRefill: c.count > 1, refillCount: c.count > 1 ? c.count : null, doctor: null
+      }
+    };
+  });
+}
+
+// ---- r7: 檢驗檢查結果（依機構＋日期分組）----
+function buildHbLabDrafts(bdata, person) {
+  const raw = bdata.r7 || [];
+  if (!Array.isArray(raw)) return [];
+  const items = raw.map(v => ({
+    institution: v["r7.4"] || "", examDate: hbIsoDate(v["r7.6"]) || hbIsoDate(v["r7.5"]),
+    itemName: v["r7.10"] || "", value: v["r7.11"] || "", ref: v["r7.12"] || ""
+  })).filter(i => i.examDate);
+  const groups = {};
+  items.forEach(it => {
+    const key = `${it.institution}::${it.examDate}`;
+    (groups[key] = groups[key] || { institution: it.institution, examDate: it.examDate, items: [] }).items.push(it);
+  });
+  return Object.values(groups).map(g => {
+    const lines = g.items.map(it => {
+      const ref = it.ref && it.ref !== "[][]" && it.ref !== "[無][無]" ? `（參考值 ${it.ref}）` : "";
+      return `・${it.itemName}：${it.value}${ref}`;
+    });
+    const description = `【檢驗項目共 ${g.items.length} 項】\n${lines.join("\n")}`;
+    const { text: safeDesc, hits } = redact(description);
+    return {
+      date: g.examDate, category: "exam", status: "done", person,
+      title: `${g.institution}｜檢驗結果（${g.items.length}項）`.slice(0, 36),
+      description: safeDesc, tags: [g.institution].filter(Boolean), hits, include: true,
+      sourceKey: `nhi:lab:${g.examDate}:${g.institution}`
+    };
+  });
+}
+
+// ---- r8: 影像或病理檢查資料（同一檢查代碼的重複報告會自動去重合併）----
+function buildHbImagingDrafts(bdata, person) {
+  const raw = bdata.r8 || [];
+  if (!Array.isArray(raw)) return [];
+  const items = raw.map(v => ({
+    institution: v["r8.4"] || "", examDate: hbIsoDate(v["r8.6"]) || hbIsoDate(v["r8.5"]),
+    orderCode: v["r8.8"] || "", orderName: v["r8.9"] || "",
+    reportText: (v["r8.10"] || "").replace(/\s+/g, " ").trim()
+  })).filter(i => i.examDate);
+  const clusters = {};
+  items.forEach(g => {
+    const key = `${g.institution}::${g.examDate}::${g.orderCode || g.orderName}`;
+    clusters[key] = clusters[key] || { institution: g.institution, examDate: g.examDate, orderName: g.orderName, orderCode: g.orderCode, reportTexts: [] };
+    if (g.reportText && !clusters[key].reportTexts.includes(g.reportText)) clusters[key].reportTexts.push(g.reportText);
+  });
+  return Object.values(clusters).map(c => {
+    const combinedReport = c.reportTexts.join("\n\n");
+    const { text: translatedText, hasResidualEnglish } = translateNhiReportText(combinedReport);
+    const { text: safeDesc, hits } = redact(translatedText);
+    const doctorTag = extractDoctorTag(combinedReport);
+    const tags = [c.institution, doctorTag].filter(Boolean);
+    let description = safeDesc;
+    if (c.reportTexts.length > 1) description = `（此檢查在健保資料中有 ${c.reportTexts.length} 段報告內容，已合併呈現）\n\n` + description;
+    if (hasResidualEnglish) description = "⚠️ 部分內容為英文原文，系統未能自動對照翻譯，建議自行確認或詢問醫師。\n\n" + description;
+    return {
+      date: c.examDate, category: "exam", status: "done", person,
+      title: `${c.institution}｜${c.orderName || "檢查報告"}`.slice(0, 36),
+      description, tags, hits, include: true,
+      sourceKey: `nhi:exam:${c.examDate}:${c.institution}:${c.orderCode || c.orderName}`,
+      meta: { doctor: extractDoctorName(combinedReport), mainDiagnosis: null, subDiagnosis: [], orders: [], medications: [], isRefill: false, refillCount: null }
+    };
+  });
+}
+
+// ---- r4: 藥物過敏／不良反應記錄（新類別，安全性資訊，狀態預設「追蹤中」）----
+function buildHbAllergyDrafts(bdata, person) {
+  const raw = bdata.r4 || [];
+  if (!Array.isArray(raw)) return [];
+  return raw.map(v => {
+    const drugName = (v["r4.2"] || "").replace(/,+$/, "").split(",").filter((x, i, a) => a.indexOf(x) === i).join("、");
+    if (!drugName) return null;
+    const date = hbIsoDate(v["r4.1"]);
+    const institution = v["r4.5"] || "";
+    const description = `【過敏／不良反應藥物】${drugName}\n【通報機構】${institution}\n\n⚠️ 就醫或領藥時請主動告知醫師/藥師此藥物過敏史。`;
+    const { text: safeDesc, hits } = redact(description);
+    return {
+      date: date || todayStr(), category: "symptom", status: "tracking", person,
+      title: `藥物過敏：${drugName}`.slice(0, 36),
+      description: safeDesc, tags: [institution, "藥物過敏"].filter(Boolean), hits, include: true,
+      sourceKey: `nhi:allergy:${date}:${institution}:${drugName}`
+    };
+  }).filter(Boolean);
+}
+
+// ---- r6: 疫苗接種記錄（新類別）----
+function buildHbVaccineDrafts(bdata, person) {
+  const raw = bdata.r6 || [];
+  if (!Array.isArray(raw)) return [];
+  return raw.map(v => {
+    const vaccineName = v["r6.3"] || "";
+    if (!vaccineName) return null;
+    const date = hbIsoDate(v["r6.1"]);
+    const institution = v["r6.5"] || "";
+    const description = `【疫苗】${vaccineName}\n【接種機構】${institution}`;
+    const { text: safeDesc, hits } = redact(description);
+    return {
+      date: date || todayStr(), category: "med", status: "done", person,
+      title: `疫苗接種：${vaccineName}`.slice(0, 36),
+      description: safeDesc, tags: [institution].filter(Boolean), hits, include: true,
+      sourceKey: `nhi:vaccine:${date}:${vaccineName}`
+    };
+  }).filter(Boolean);
+}
+
+// ---- r10: 成人預防保健檢查（欄位對照複雜，僅標註機構/日期/異常提醒，其餘原始數值列出供參考）----
+function buildHbCheckupDrafts(bdata, person) {
+  const raw = bdata.r10 || [];
+  if (!Array.isArray(raw)) return [];
+  return raw.map((v, idx) => {
+    const institution = v["r10.2"] || "";
+    const date = hbIsoDate(v["r10.5"]);
+    const remarks = Object.values(v).filter(val => typeof val === "string" && (val.includes("異常") || val.includes("建議")));
+    const rawValues = Object.entries(v).filter(([k, val]) => val).map(([k, val]) => `${k}: ${val}`).join("　");
+    const parts = [];
+    if (remarks.length) parts.push(`【提醒】${[...new Set(remarks)].join("；")}`);
+    parts.push(`（欄位對照複雜，系統無法確認每個數值對應的確切項目，以下為原始數值，如需完整判讀請以健保快易通 App 或健康存摺網站上的官方報告為準）\n${rawValues}`);
+    const description = parts.join("\n\n");
+    const { text: safeDesc, hits } = redact(description);
+    return {
+      date: date || todayStr(), category: "exam", status: "done", person,
+      title: `${institution}｜成人預防保健檢查`.slice(0, 36),
+      description: safeDesc, tags: [institution].filter(Boolean), hits, include: true,
+      sourceKey: `nhi:checkup:${date}:${institution}:${idx}`
+    };
+  });
+}
+
+// ---- r11: 癌症篩檢（結構清楚：篩檢類型 + 逐次結果）----
+function buildHbScreeningDrafts(bdata, person) {
+  const raw = bdata.r11 || [];
+  if (!Array.isArray(raw)) return [];
+  const drafts = [];
+  raw.forEach(group => {
+    const screeningType = group["r11.1"] || "癌症篩檢";
+    const itemName = group["r11.2"] || "";
+    (group.r11_1 || []).forEach(entry => {
+      const date = hbIsoDate(entry["r11_1.1"]);
+      const institution = entry["r11_1.2"] || "";
+      const result = entry["r11_1.3"] || "";
+      const advice = entry["r11_1.4"] || "";
+      const description = [
+        itemName ? `【檢查項目】${itemName}` : "",
+        result ? `【結果】${result}` : "",
+        advice ? `【說明】${advice}` : ""
+      ].filter(Boolean).join("\n\n");
+      const { text: safeDesc, hits } = redact(description);
+      drafts.push({
+        date: date || todayStr(), category: "exam", status: "done", person,
+        title: `${institution}｜${screeningType}`.slice(0, 36),
+        description: safeDesc, tags: [institution].filter(Boolean), hits, include: true,
+        sourceKey: `nhi:screening:${date}:${institution}:${screeningType}`
+      });
+    });
+  });
+  return drafts;
+}
+
+function buildDraftsFromHealthBankJson(bdata, person) {
+  return [].concat(
+    buildHbVisitDrafts(bdata, person),
+    buildHbLabDrafts(bdata, person),
+    buildHbImagingDrafts(bdata, person),
+    buildHbAllergyDrafts(bdata, person),
+    buildHbVaccineDrafts(bdata, person),
+    buildHbCheckupDrafts(bdata, person),
+    buildHbScreeningDrafts(bdata, person)
+  );
+}
+
+let hbFile = null;
+const hbDropzone = $("#hb-dropzone");
+hbDropzone.addEventListener("click", () => $("#hb-file-input").click());
+hbDropzone.addEventListener("dragover", (e) => { e.preventDefault(); hbDropzone.classList.add("drag"); });
+hbDropzone.addEventListener("dragleave", () => hbDropzone.classList.remove("drag"));
+hbDropzone.addEventListener("drop", (e) => {
+  e.preventDefault(); hbDropzone.classList.remove("drag");
+  if (e.dataTransfer.files[0]) setHbFile(e.dataTransfer.files[0]);
+});
+$("#hb-file-input").addEventListener("change", (e) => { if (e.target.files[0]) setHbFile(e.target.files[0]); e.target.value = ""; });
+function setHbFile(file) {
+  hbFile = file;
+  $("#hb-file-status").textContent = `已選取：${file.name}`;
+}
+$("#hb-clear-file-btn").addEventListener("click", () => { hbFile = null; $("#hb-file-status").textContent = ""; });
+
+$("#hb-parse-btn").addEventListener("click", async () => {
+  if (!hbFile) { toast("請先選取或拖曳健康存摺 JSON 檔案"); return; }
+  const person = $("#hb-person").value;
+  $("#hb-file-status").textContent = "解析中…";
+  try {
+    const text = await readFileAsText(hbFile);
+    const json = JSON.parse(text);
+    if (!isHealthBankJson(json)) {
+      toast("這個檔案看起來不是健康存摺 JSON 格式（找不到 myhealthbank.bdata），請確認檔案內容");
+      $("#hb-file-status").textContent = "";
+      return;
+    }
+    const bdata = json.myhealthbank.bdata;
+    let allDrafts = buildDraftsFromHealthBankJson(bdata, person);
+
+    const existingKeys = await fetchExistingNhiSourceKeys();
+    allDrafts.forEach(d => {
+      if (d.sourceKey && existingKeys.has(d.sourceKey)) { d.duplicate = true; d.include = false; }
+    });
+    allDrafts.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
+    draftEntries = allDrafts;
+    $("#hb-file-status").textContent = `已解析完成，共 ${allDrafts.length} 筆候選紀錄`;
+    hbFile = null;
+    renderDraftList();
+  } catch (err) {
+    console.error(err);
+    toast("解析失敗，請確認這是健康存摺匯出的 JSON 檔案");
+    $("#hb-file-status").textContent = "";
+  }
+});
+
+// ============================================================================
 // Boot
 // ============================================================================
 initLockScreen();
