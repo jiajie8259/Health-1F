@@ -142,25 +142,25 @@
 
       <div class="import-row">
         <div class="import-panel">
-          <h3>健保快易通資料匯入</h3>
-          <p class="desc">支援「健保快易通」App 匯出的門診資料、用藥資料、影像或病理檢查資料、檢驗檢查結果（HTML 格式）。可一次選取多個檔案，系統會自動判斷檔案類型並依時間軸整理。重複上傳同一批資料時，已存在的紀錄會自動偵測並預設不重複匯入。</p>
+          <h3>健康存摺 JSON 匯入 <span class="tag-pill" style="background:var(--status-tracking-bg);color:var(--status-tracking);">推薦</span></h3>
+          <p class="desc">在「健保快易通」App 點選「健康存摺」→ 左上角選單 → 下載完整資料，會得到一個 JSON 檔案，包含門診、用藥、檢驗、影像、過敏、疫苗、健檢、癌症篩檢等完整資訊，一次匯入即可，不用再分開下載 4 個檔案。</p>
           <div class="field" style="max-width:220px;">
             <label>這批資料屬於</label>
-            <select id="nhi-person">
+            <select id="hb-person">
               <option value="mother">媽媽</option>
               <option value="father">爸爸</option>
             </select>
           </div>
-          <div class="dropzone" id="nhi-dropzone">
-            📄 拖曳一個或多個健保快易通 HTML 檔案到這裡，或點擊選擇檔案
-            <input type="file" id="nhi-file-input" accept=".html,.htm" multiple style="display:none" />
+          <div class="dropzone" id="hb-dropzone">
+            📄 拖曳健康存摺 JSON 檔案到這裡，或點擊選擇檔案
+            <input type="file" id="hb-file-input" accept=".json" style="display:none" />
           </div>
-          <div id="nhi-file-status" class="field-hint"></div>
+          <div id="hb-file-status" class="field-hint"></div>
           <div style="margin-top:10px; display:flex; gap:10px;">
-            <button class="primary" id="nhi-parse-btn">解析健保資料</button>
-            <button class="secondary" id="nhi-clear-files-btn">清除已選檔案</button>
+            <button class="primary" id="hb-parse-btn">解析健康存摺資料</button>
+            <button class="secondary" id="hb-clear-file-btn">清除已選檔案</button>
           </div>
-          <div class="privacy-note">⚠️ 影像/病理報告內文常含有姓名、病歷號碼、出生日期，系統會自動偵測並遮蔽這些欄位；報告中的英文內容，系統會盡量附上中文參考翻譯，若無法對照則保留原文並標註提醒，請務必自行確認。</div>
+          <div class="privacy-note">⚠️ 報告內文常含有姓名、病歷號碼、出生日期，系統會自動偵測並遮蔽這些欄位；英文報告內容會盡量附上中文參考翻譯，若無法對照則保留原文並標註提醒，請務必自行確認。</div>
 
           <div class="danger-zone">
             <span class="danger-zone-label">清除舊資料</span>
@@ -198,6 +198,28 @@
           <div id="gpt-clear-status" class="field-hint"></div>
         </div>
       </div>
+
+      <details class="import-panel" style="margin-bottom:20px;">
+        <summary style="cursor:pointer; font-size:15px; font-weight:800;">進階／舊版：分開匯入 4 個健保快易通 HTML 檔案</summary>
+        <p class="desc" style="margin-top:10px;">如果你手邊還是分開下載門診資料、用藥資料、影像或病理檢查資料、檢驗檢查結果這 4 個 HTML 檔案，也可以用這裡匯入。建議改用上方「健康存摺 JSON 匯入」，一次下載、資料更完整。</p>
+        <div class="field" style="max-width:220px;">
+          <label>這批資料屬於</label>
+          <select id="nhi-person">
+            <option value="mother">媽媽</option>
+            <option value="father">爸爸</option>
+          </select>
+        </div>
+        <div class="dropzone" id="nhi-dropzone">
+          📄 拖曳一個或多個健保快易通 HTML 檔案到這裡，或點擊選擇檔案
+          <input type="file" id="nhi-file-input" accept=".html,.htm" multiple style="display:none" />
+        </div>
+        <div id="nhi-file-status" class="field-hint"></div>
+        <div style="margin-top:10px; display:flex; gap:10px;">
+          <button class="primary" id="nhi-parse-btn">解析健保資料</button>
+          <button class="secondary" id="nhi-clear-files-btn">清除已選檔案</button>
+        </div>
+      </details>
+
 
 
       <div id="import-summary" class="import-panel" style="display:none">
