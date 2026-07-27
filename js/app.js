@@ -1732,17 +1732,67 @@ function buildHbVaccineDrafts(bdata, person) {
 }
 
 // ---- r10: 成人預防保健檢查（欄位對照複雜，僅標註機構/日期/異常提醒，其餘原始數值列出供參考）----
+// 欄位對照已用使用者提供的官方畫面截圖逐一核對確認（身高體重、血壓、血脂、血糖、腎功能、肝功能）。
+// r10.28~30（推測為尿酸）與 r10.35~42（用途不確定，部分紀錄為潛血檢查陰性/陽性）因無法完全比對確認，
+// 保留原始數值並標註，不強行貼上可能錯誤的項目名稱。
 function buildHbCheckupDrafts(bdata, person) {
   const raw = bdata.r10 || [];
   if (!Array.isArray(raw)) return [];
   return raw.map((v, idx) => {
     const institution = v["r10.2"] || "";
     const date = hbIsoDate(v["r10.5"]);
-    const remarks = Object.values(v).filter(val => typeof val === "string" && (val.includes("異常") || val.includes("建議")));
-    const rawValues = Object.entries(v).filter(([k, val]) => val).map(([k, val]) => `${k}: ${val}`).join("　");
+    const g = (key) => v[key] || "";
     const parts = [];
-    if (remarks.length) parts.push(`【提醒】${[...new Set(remarks)].join("；")}`);
-    parts.push(`（欄位對照複雜，系統無法確認每個數值對應的確切項目，以下為原始數值，如需完整判讀請以健保快易通 App 或健康存摺網站上的官方報告為準）\n${rawValues}`);
+    const remarks = [];
+
+    if (g("r10.6") || g("r10.7") || g("r10.8") || g("r10.9")) {
+      const bits = [];
+      if (g("r10.6")) bits.push(`身高 ${g("r10.6")} cm`);
+      if (g("r10.7")) bits.push(`體重 ${g("r10.7")} kg`);
+      if (g("r10.8")) bits.push(`BMI ${g("r10.8")}`);
+      if (g("r10.9")) bits.push(`腰圍 ${g("r10.9")} cm`);
+      parts.push(`【身高體重】${bits.join("，")}`);
+    }
+    if (g("r10.10") || g("r10.11")) {
+      parts.push(`【血壓】收縮壓 ${g("r10.10") || "?"} / 舒張壓 ${g("r10.11") || "?"} mmHg${g("r10.13") ? `（${g("r10.13")}）` : ""}`);
+      if (g("r10.13") && g("r10.13") !== "正常") remarks.push(`血壓：${g("r10.13")}`);
+    }
+    if (g("r10.14") || g("r10.15") || g("r10.16") || g("r10.17")) {
+      const bits = [];
+      if (g("r10.14")) bits.push(`總膽固醇 ${g("r10.14")}`);
+      if (g("r10.15")) bits.push(`三酸甘油脂 ${g("r10.15")}`);
+      if (g("r10.16")) bits.push(`HDL ${g("r10.16")}`);
+      if (g("r10.17")) bits.push(`LDL ${g("r10.17")}`);
+      parts.push(`【血脂肪】${bits.join("、")} mg/dl${g("r10.19") ? `（${g("r10.19")}）` : ""}`);
+      if (g("r10.19") && g("r10.19") !== "正常") remarks.push(`血脂肪：${g("r10.19")}`);
+    }
+    if (g("r10.20")) {
+      parts.push(`【血糖】飯前血糖 ${g("r10.20")} mg/dl${g("r10.22") ? `（${g("r10.22")}）` : ""}`);
+      if (g("r10.22") && g("r10.22") !== "正常") remarks.push(`血糖：${g("r10.22")}`);
+    }
+    if (g("r10.23") || g("r10.24") || g("r10.25")) {
+      const bits = [];
+      if (g("r10.23")) bits.push(`尿素氮 ${g("r10.23")} mmol/L`);
+      if (g("r10.24")) bits.push(`肌酸酐 ${g("r10.24")} umol/L`);
+      if (g("r10.25")) bits.push(`腎絲球過濾率 ${g("r10.25")} ml/min/1.73m2`);
+      parts.push(`【腎功能】${bits.join("、")}${g("r10.27") ? `（${g("r10.27")}）` : ""}`);
+      if (g("r10.27") && g("r10.27") !== "正常") remarks.push(`腎功能：${g("r10.27")}`);
+    }
+    if (g("r10.31") || g("r10.32")) {
+      const bits = [];
+      if (g("r10.31")) bits.push(`SGOT(AST) ${g("r10.31")}`);
+      if (g("r10.32")) bits.push(`SGPT(ALT) ${g("r10.32")}`);
+      parts.push(`【肝功能】${bits.join("、")} IU/l${g("r10.34") ? `（${g("r10.34")}）` : ""}`);
+      if (g("r10.34") && g("r10.34") !== "正常") remarks.push(`肝功能：${g("r10.34")}`);
+    }
+    // 尿酸與剩餘欄位（r10.28-30、r10.35-42）尚未完全比對確認，保留原始值供參考
+    const residualKeys = ["r10.28", "r10.29", "r10.30", "r10.35", "r10.36", "r10.37", "r10.38", "r10.39", "r10.40", "r10.41", "r10.42"];
+    const residual = residualKeys.filter(k => g(k)).map(k => `${k}=${g(k)}`);
+    if (residual.length) parts.push(`（其餘欄位尚未完全對照確認，原始值：${residual.join("　")}）`);
+
+    if (remarks.length) parts.unshift(`【提醒】${remarks.join("；")}`);
+    if (!parts.length) parts.push("（此次檢查資料欄位為空）");
+
     const description = parts.join("\n\n");
     const { text: safeDesc, hits } = redact(description);
     return {
