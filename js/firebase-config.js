@@ -23,6 +23,7 @@ export const appConfig = {
   // Firestore 集合名稱
   recordsCollection: "records",
   settingsCollection: "settings",
+  conditionsCollection: "conditions",
 
   // 密碼保護說明：
   // 密碼「雜湊」不會存在這個檔案裡，而是存在 Firestore 的
