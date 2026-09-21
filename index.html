@@ -33,7 +33,11 @@
       </div>
     </div>
     <nav class="nav-group" id="sidebar-nav">
-      <div class="nav-item active" data-route="timeline">
+      <div class="nav-item active" data-route="condition">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-6.5-4.35-9.5-8.5C.5 9 1.5 5 5 4a5 5 0 0 1 7 1 5 5 0 0 1 7-1c3.5 1 4.5 5 2.5 8.5C18.5 16.65 12 21 12 21z"/></svg>
+        健康狀況
+      </div>
+      <div class="nav-item" data-route="timeline">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v4M16 3v4M4 9h16M5 6h14a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>
         時間軸
       </div>
@@ -43,7 +47,7 @@
       </div>
     </nav>
     <div class="sidebar-conditions">
-      <div class="sidebar-conditions-title">GPT對話紀錄</div>
+      <div class="sidebar-conditions-title">病症快速索引</div>
       <div id="condition-sidebar"></div>
     </div>
     <div class="sidebar-footer">
@@ -58,8 +62,29 @@
   </aside>
 
   <main class="main">
+    <!-- ---------- Health status / conditions page ---------- -->
+    <section id="page-condition">
+      <div class="topbar">
+        <div>
+          <div class="page-title">健康狀況</div>
+          <div class="page-sub" id="condition-count-sub">尚無病症紀錄</div>
+        </div>
+      </div>
+
+      <div class="controls-row">
+        <div class="view-toggle" id="condition-person-toggle">
+          <button data-person="mother" class="active">媽媽</button>
+          <button data-person="father">爸爸</button>
+        </div>
+        <button class="primary" id="add-condition-btn">＋ 新增病症</button>
+      </div>
+
+      <div id="condition-list-view"></div>
+      <div id="condition-detail-view" style="display:none"></div>
+    </section>
+
     <!-- ---------- Timeline / List page ---------- -->
-    <section id="page-timeline">
+    <section id="page-timeline" style="display:none">
       <div class="topbar">
         <div>
           <div class="page-title">時間軸</div>
@@ -237,7 +262,11 @@
   <button class="fab" id="fab-add" title="新增紀錄">＋</button>
 
   <nav class="bottom-nav">
-    <div class="nav-item active" data-route="timeline">
+    <div class="nav-item active" data-route="condition">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-6.5-4.35-9.5-8.5C.5 9 1.5 5 5 4a5 5 0 0 1 7 1 5 5 0 0 1 7-1c3.5 1 4.5 5 2.5 8.5C18.5 16.65 12 21 12 21z"/></svg>
+      健康狀況
+    </div>
+    <div class="nav-item" data-route="timeline">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v4M16 3v4M4 9h16M5 6h14a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>
       時間軸
     </div>
@@ -302,6 +331,14 @@
     </div>
 
     <div class="field">
+      <label>歸屬病症（選填）</label>
+      <select id="f-condition">
+        <option value="">— 不歸屬任何病症 —</option>
+      </select>
+      <div class="field-hint">如果這筆是某個長期病症（例如白內障、痔瘡）的一次紀錄，選起來之後可以在「健康狀況」頁看到完整病程。</div>
+    </div>
+
+    <div class="field">
       <label>狀態</label>
       <div class="status-select" id="f-status">
         <button data-status="active" type="button">治療中</button>
@@ -325,6 +362,70 @@
       <div class="right">
         <button class="secondary" id="cancel-record-btn">取消</button>
         <button class="primary" id="save-record-btn">儲存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================== Condition Modal ============================== -->
+<div class="modal-overlay" id="condition-modal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 id="condition-modal-title">新增病症</h2>
+      <button class="modal-close" id="condition-modal-close-btn">✕</button>
+    </div>
+
+    <div class="field">
+      <label>家人</label>
+      <div class="cat-select" id="cf-person">
+        <button data-person="mother" type="button">媽媽</button>
+        <button data-person="father" type="button">爸爸</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>病症名稱</label>
+      <input type="text" id="cf-name" placeholder="例如：白內障、痔瘡、走路困難" />
+    </div>
+
+    <div class="field">
+      <label>狀態</label>
+      <div class="status-select" id="cf-status">
+        <button data-status="active" type="button">治療中</button>
+        <button data-status="tracking" type="button">追蹤中</button>
+        <button data-status="done" type="button">✓ 已完成</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>整體說明（選填）</label>
+      <textarea id="cf-summary" placeholder="例如：2023年發現，目前點藥觀察中，預計半年後複診"></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button class="danger-link" id="condition-delete-btn" style="display:none">刪除這個病症</button>
+      <div class="right">
+        <button class="secondary" id="condition-cancel-btn">取消</button>
+        <button class="primary" id="condition-save-btn">儲存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================== Doctor Summary Modal ============================== -->
+<div class="modal-overlay" id="doctor-summary-modal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>整理給醫生看</h2>
+      <button class="modal-close" id="doctor-summary-close-btn">✕</button>
+    </div>
+    <p class="field-hint" style="margin-bottom:10px;">以下是自動整理的病程摘要，可以直接複製、給醫生看或唸給醫生聽。</p>
+    <div id="doctor-summary-text" class="doctor-summary-box"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div class="right">
+        <button class="secondary" id="doctor-summary-close-btn2">關閉</button>
+        <button class="primary" id="doctor-summary-copy-btn">複製文字</button>
       </div>
     </div>
   </div>
