@@ -151,6 +151,7 @@ function unlockApp() {
   $("#app-shell").classList.add("active");
   initUserIdentity();
   startRecordsListener();
+  startConditionsListener();
 }
 
 $("#lock-submit").addEventListener("click", handleLockSubmit);
@@ -184,7 +185,6 @@ let activeCategoryFilters = new Set();
 let activeStatusFilters = new Set();
 let activePersonFilters = new Set();
 let searchTerm = "";
-let conditionFilter = null; // { person, cond } | null — 左側病症索引篩選
 let selectedTimelineDate = null; // 橫向時間軸目前選取的日期
 
 function startRecordsListener() {
@@ -192,14 +192,36 @@ function startRecordsListener() {
   onSnapshot(q, (snap) => {
     allRecords = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderAll();
+    if (currentRoute === "condition") renderConditionPage();
   }, (err) => {
     console.error(err);
     toast("讀取資料發生問題，請確認 Firebase 設定");
   });
 }
 
+// ============================================================================
+// 病症（conditions）狀態 + Firestore 監聽
+// ============================================================================
+let allConditions = [];
+let conditionPersonFilter = "mother";
+let selectedConditionId = null;
+
+function startConditionsListener() {
+  const q = query(collection(db, appConfig.conditionsCollection), orderBy("updatedAt", "desc"));
+  onSnapshot(q, (snap) => {
+    allConditions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderConditionSidebar();
+    if (currentRoute === "condition") renderConditionPage();
+    syncConditionSelectOptions();
+  }, (err) => {
+    console.error(err);
+    toast("讀取病症資料發生問題");
+  });
+}
+
 // 從標題推導「病症/主題」關鍵字：NHI 匯入的標題常是「機構｜診斷」，取後半段；
 // 用藥標題是「機構｜用藥（疾病）」，取括號內容。手動/GPT 紀錄則直接用標題本身。
+// （目前用於「掛入既有紀錄」面板的比對建議。）
 function deriveConditionKey(record) {
   let t = (record.title || "").trim();
   const barIdx = t.indexOf("｜");
@@ -214,10 +236,6 @@ function filteredRecords() {
     if (activeCategoryFilters.size && !activeCategoryFilters.has(r.category)) return false;
     if (activeStatusFilters.size && !activeStatusFilters.has(r.status)) return false;
     if (activePersonFilters.size && !activePersonFilters.has(r.person || "other")) return false;
-    if (conditionFilter) {
-      if ((r.person || "other") !== conditionFilter.person) return false;
-      if (deriveConditionKey(r) !== conditionFilter.cond) return false;
-    }
     if (searchTerm) {
       const hay = [r.title, r.description, (r.tags || []).join(" "), CATEGORY_LABELS[r.category], PERSON_LABELS[r.person]].join(" ").toLowerCase();
       if (!hay.includes(searchTerm.toLowerCase())) return false;
@@ -227,54 +245,39 @@ function filteredRecords() {
 }
 
 function renderAll() {
-  renderConditionSidebar();
   renderRings();
   renderCounts();
   if (currentView === "timeline") renderTimeline(); else renderList();
 }
 
 // ----------------------------------------------------------------------------
-// Condition-index sidebar (病症索引) — derived from records, per person
+// 側邊欄「病症快速索引」— 列出真實的病症（conditions），點擊直接跳到健康狀況頁
 // ----------------------------------------------------------------------------
-let conditionEntries = [];
 function renderConditionSidebar() {
   const el = $("#condition-sidebar");
   if (!el) return;
-  const byPerson = {};
-  allRecords.filter(r => r.source !== "nhi-import").forEach(r => {
-    const p = r.person || "other";
-    const key = deriveConditionKey(r);
-    byPerson[p] = byPerson[p] || {};
-    byPerson[p][key] = (byPerson[p][key] || 0) + 1;
-  });
-  conditionEntries = [];
-  const order = ["mother", "father", "other"];
+  const order = ["mother", "father"];
   let html = "";
-  order.filter(p => byPerson[p]).forEach(p => {
-    const conditions = Object.entries(byPerson[p]).sort((a, b) => b[1] - a[1]);
+  order.forEach(p => {
+    const list = allConditions.filter(c => c.person === p);
+    if (!list.length) return;
     html += `<div class="condition-person-block">
       <div class="condition-person-name"><span class="person-pill ${p}">${PERSON_LABELS[p]}</span></div>`;
-    conditions.forEach(([cond, count]) => {
-      const i = conditionEntries.length;
-      conditionEntries.push({ person: p, cond });
-      const active = conditionFilter && conditionFilter.person === p && conditionFilter.cond === cond;
-      html += `<div class="condition-item ${active ? "active" : ""}" data-i="${i}" title="${escapeHtml(cond)}">
-        <span>${escapeHtml(cond)}</span><span class="count">${count}</span></div>`;
+    list.forEach(c => {
+      html += `<div class="condition-item" data-id="${c.id}" data-person="${p}" title="${escapeHtml(c.name)}">
+        <span>${escapeHtml(c.name)}</span><span class="status-pill ${c.status}" style="font-size:9.5px;padding:2px 6px;">${STATUS_LABELS[c.status] || ""}</span></div>`;
     });
     html += `</div>`;
   });
-  if (!html) html = `<div class="condition-empty-hint">尚無手動新增或 GPT 匯入的紀錄，新增後這裡會自動列出病症索引。</div>`;
-  if (conditionFilter) html += `<button class="condition-clear-btn" id="condition-clear-btn">✕ 清除病症篩選</button>`;
+  if (!html) html = `<div class="condition-empty-hint">尚未建立病症，到「健康狀況」頁新增後這裡會列出快速連結。</div>`;
   el.innerHTML = html;
   el.querySelectorAll(".condition-item").forEach(item => {
     item.addEventListener("click", () => {
-      const entry = conditionEntries[Number(item.dataset.i)];
-      conditionFilter = (conditionFilter && conditionFilter.person === entry.person && conditionFilter.cond === entry.cond) ? null : entry;
-      renderAll();
+      conditionPersonFilter = item.dataset.person;
+      selectedConditionId = item.dataset.id;
+      setRoute("condition");
     });
   });
-  const clearBtn = $("#condition-clear-btn");
-  if (clearBtn) clearBtn.addEventListener("click", () => { conditionFilter = null; renderAll(); });
 }
 
 // ----------------------------------------------------------------------------
@@ -308,9 +311,7 @@ function renderRings() {
 
 function renderCounts() {
   const n = filteredRecords().length;
-  let text = n === 0 ? "尚無紀錄" : `共 ${n} 筆紀錄`;
-  if (conditionFilter) text += `｜篩選中：${PERSON_LABELS[conditionFilter.person]} · ${conditionFilter.cond}`;
-  $("#record-count-sub").textContent = text;
+  $("#record-count-sub").textContent = n === 0 ? "尚無紀錄" : `共 ${n} 筆紀錄`;
 }
 
 // ----------------------------------------------------------------------------
@@ -517,11 +518,15 @@ $("#search-input").addEventListener("input", (e) => {
 // ============================================================================
 // Navigation (routes)
 // ============================================================================
+let currentRoute = "condition";
 function setRoute(route) {
+  currentRoute = route;
   $$('.nav-item').forEach(n => n.classList.toggle("active", n.dataset.route === route));
+  $("#page-condition").style.display = route === "condition" ? "" : "none";
   $("#page-timeline").style.display = route === "timeline" ? "" : "none";
   $("#page-import").style.display = route === "import" ? "" : "none";
   $("#fab-add").style.display = route === "timeline" ? "flex" : "none";
+  if (route === "condition") renderConditionPage();
 }
 $$('.nav-item').forEach(item => item.addEventListener("click", () => setRoute(item.dataset.route)));
 
@@ -533,13 +538,27 @@ let formAttachments = [];
 let formCategory = "symptom";
 let formStatus = "tracking";
 let formPerson = "mother";
+let formConditionId = "";
 
-function openAddModal() {
+// 依目前選擇的家人，重新整理「歸屬病症」下拉選單的選項
+function syncConditionSelectOptions() {
+  const sel = $("#f-condition");
+  if (!sel) return;
+  const options = allConditions.filter(c => c.person === formPerson);
+  const current = sel.value;
+  sel.innerHTML = `<option value="">— 不歸屬任何病症 —</option>` +
+    options.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
+  sel.value = options.some(c => c.id === (formConditionId || current)) ? (formConditionId || current) : "";
+  formConditionId = sel.value;
+}
+
+function openAddModal(presetConditionId) {
   editingId = null;
   formAttachments = [];
   formCategory = "symptom";
   formStatus = "tracking";
-  formPerson = localStorage.getItem("hj_last_person") || "mother";
+  formPerson = (presetConditionId && allConditions.find(c => c.id === presetConditionId)?.person) || localStorage.getItem("hj_last_person") || "mother";
+  formConditionId = presetConditionId || "";
   $("#modal-title").textContent = "新增紀錄";
   $("#delete-record-btn").style.display = "none";
   $("#f-date").value = todayStr();
@@ -550,6 +569,7 @@ function openAddModal() {
   syncCategoryButtons();
   syncStatusButtons();
   syncPersonButtons();
+  syncConditionSelectOptions();
   renderAttachList();
   $("#record-modal").classList.add("active");
 }
@@ -562,6 +582,7 @@ async function openEditModal(id) {
   formCategory = r.category || "symptom";
   formStatus = r.status || "tracking";
   formPerson = r.person || "mother";
+  formConditionId = r.conditionId || "";
   $("#modal-title").textContent = "編輯紀錄";
   $("#delete-record-btn").style.display = "inline-block";
   $("#f-date").value = r.date || todayStr();
@@ -572,6 +593,7 @@ async function openEditModal(id) {
   syncCategoryButtons();
   syncStatusButtons();
   syncPersonButtons();
+  syncConditionSelectOptions();
   renderAttachList();
   $("#record-modal").classList.add("active");
 
@@ -588,7 +610,7 @@ async function openEditModal(id) {
 function closeModal() { $("#record-modal").classList.remove("active"); }
 $("#modal-close-btn").addEventListener("click", closeModal);
 $("#cancel-record-btn").addEventListener("click", closeModal);
-$("#fab-add").addEventListener("click", openAddModal);
+$("#fab-add").addEventListener("click", () => openAddModal());
 
 function syncCategoryButtons() {
   $$("#f-category button").forEach(b => b.classList.toggle("active", b.dataset.cat === formCategory));
@@ -601,7 +623,8 @@ function syncPersonButtons() {
 }
 $$("#f-category button").forEach(b => b.addEventListener("click", () => { formCategory = b.dataset.cat; syncCategoryButtons(); }));
 $$("#f-status button").forEach(b => b.addEventListener("click", () => { formStatus = b.dataset.status; syncStatusButtons(); }));
-$$("#f-person button").forEach(b => b.addEventListener("click", () => { formPerson = b.dataset.person; localStorage.setItem("hj_last_person", formPerson); syncPersonButtons(); }));
+$$("#f-person button").forEach(b => b.addEventListener("click", () => { formPerson = b.dataset.person; localStorage.setItem("hj_last_person", formPerson); syncPersonButtons(); formConditionId = ""; syncConditionSelectOptions(); }));
+$("#f-condition").addEventListener("change", (e) => { formConditionId = e.target.value; });
 
 function fmtBytes(n) {
   if (!n) return "";
@@ -727,6 +750,7 @@ $("#save-record-btn").addEventListener("click", async () => {
   const payload = {
     date, time, title: safeTitle, description,
     tags, category: formCategory, status: formStatus, person: formPerson,
+    conditionId: formConditionId || null,
     attachmentCount: formAttachments.length,
     createdBy: currentUser(),
     updatedAt: serverTimestamp()
@@ -741,6 +765,9 @@ $("#save-record-btn").addEventListener("click", async () => {
       payload.createdAt = serverTimestamp();
       const newDoc = await addDoc(collection(db, appConfig.recordsCollection), payload);
       recordId = newDoc.id;
+    }
+    if (formConditionId) {
+      try { await updateDoc(doc(db, appConfig.conditionsCollection, formConditionId), { updatedAt: serverTimestamp() }); } catch (e) { console.warn(e); }
     }
     // 儲存尚未寫入 Firestore 的新附件（已存在的附件不需重寫）
     const newAttachments = formAttachments.filter(a => !a.saved);
@@ -773,6 +800,275 @@ $("#delete-record-btn").addEventListener("click", async () => {
     toast("刪除失敗");
   }
 });
+
+// ============================================================================
+// 健康狀況頁（conditions）— 清單、詳細病程、掛入既有紀錄、整理給醫生看
+// ============================================================================
+
+function renderConditionPage() {
+  if (selectedConditionId) renderConditionDetailView(selectedConditionId);
+  else renderConditionListView();
+}
+
+function renderConditionListView() {
+  $("#condition-detail-view").style.display = "none";
+  const listEl = $("#condition-list-view");
+  listEl.style.display = "";
+  const list = allConditions.filter(c => c.person === conditionPersonFilter);
+  $("#condition-count-sub").textContent = list.length ? `共 ${list.length} 個病症` : "尚無病症紀錄";
+
+  if (!list.length) {
+    listEl.innerHTML = `<div class="empty-state"><div class="emoji">🩺</div><p>目前沒有建立任何病症，點右上角「＋ 新增病症」開始追蹤（例如白內障、痔瘡）</p></div>`;
+    return;
+  }
+  listEl.innerHTML = `<div class="condition-grid">${list.map(c => {
+    const count = allRecords.filter(r => r.conditionId === c.id).length;
+    const lastDate = allRecords.filter(r => r.conditionId === c.id).map(r => r.date).sort().slice(-1)[0];
+    return `
+      <div class="condition-card" data-id="${c.id}">
+        <div class="condition-card-top">
+          <div class="condition-card-name">${escapeHtml(c.name)}</div>
+          <span class="status-pill ${c.status}">${c.status === "done" ? '<span class="check-mark">✓</span>' : ""}${STATUS_LABELS[c.status] || ""}</span>
+        </div>
+        <div class="condition-card-summary${c.summary ? "" : " empty"}">${c.summary ? escapeHtml(c.summary) : "尚未填寫整體說明"}</div>
+        <div class="condition-card-meta">
+          <span>${count} 筆相關紀錄</span>
+          <span>${lastDate ? "最近更新 " + lastDate : ""}</span>
+        </div>
+      </div>`;
+  }).join("")}</div>`;
+  listEl.querySelectorAll(".condition-card").forEach(card => {
+    card.addEventListener("click", () => { selectedConditionId = card.dataset.id; renderConditionPage(); });
+  });
+}
+
+function renderConditionDetailView(id) {
+  const c = allConditions.find(x => x.id === id);
+  if (!c) { selectedConditionId = null; renderConditionListView(); return; }
+  $("#condition-list-view").style.display = "none";
+  const el = $("#condition-detail-view");
+  el.style.display = "";
+  $("#condition-count-sub").textContent = `${PERSON_LABELS[c.person]}｜${c.name}`;
+
+  const linkedRecords = allRecords.filter(r => r.conditionId === id).sort((a, b) => b.date.localeCompare(a.date));
+
+  el.innerHTML = `
+    <button class="ghost" id="condition-back-btn">← 返回病症列表</button>
+    <div class="condition-detail-header" style="margin-top:10px;">
+      <div class="condition-detail-title">
+        <span class="person-pill ${c.person}">${PERSON_LABELS[c.person]}</span>
+        ${escapeHtml(c.name)}
+        <span class="status-pill ${c.status}">${c.status === "done" ? '<span class="check-mark">✓</span>' : ""}${STATUS_LABELS[c.status] || ""}</span>
+      </div>
+      <div class="condition-detail-actions">
+        <button class="secondary" id="condition-edit-btn">編輯病症</button>
+        <button class="secondary" id="condition-summary-btn">📋 整理給醫生看</button>
+        <button class="primary" id="condition-add-record-btn">＋ 新增紀錄</button>
+      </div>
+    </div>
+
+    <div class="condition-summary-box${c.summary ? "" : " empty"}">${c.summary ? escapeHtml(c.summary) : "尚未填寫整體說明，點「編輯病症」補上。"}</div>
+
+    <div class="condition-section-title">相關病程時間軸（共 ${linkedRecords.length} 筆）</div>
+    <div id="condition-linked-records">${linkedRecords.length ? linkedRecords.map(cardHtml).join("") : `<div class="empty-state" style="padding:24px;"><p>還沒有連結任何紀錄，可以「＋新增紀錄」或在下方把既有紀錄掛進來</p></div>`}</div>
+
+    <div class="condition-section-title">掛入既有紀錄</div>
+    <div class="link-panel">
+      <input type="text" class="link-panel-search" id="link-search-input" placeholder="搜尋尚未歸屬病症的紀錄…" />
+      <div id="link-record-list"></div>
+      <div style="margin-top:10px; display:flex; justify-content:flex-end;">
+        <button class="primary" id="link-records-btn">加入此病症</button>
+      </div>
+    </div>
+  `;
+
+  el.querySelectorAll(".record-card").forEach(card => {
+    card.addEventListener("click", () => openEditModal(card.dataset.id));
+  });
+  $("#condition-back-btn").addEventListener("click", () => { selectedConditionId = null; renderConditionPage(); });
+  $("#condition-edit-btn").addEventListener("click", () => openConditionModal(id));
+  $("#condition-summary-btn").addEventListener("click", () => openDoctorSummary(id));
+  $("#condition-add-record-btn").addEventListener("click", () => openAddModal(id));
+
+  renderLinkPanel(c);
+}
+
+// ---- 掛入既有紀錄面板 ----
+function renderLinkPanel(condition) {
+  const searchInput = $("#link-search-input");
+  const listEl = $("#link-record-list");
+
+  function draw() {
+    const term = (searchInput.value || "").trim().toLowerCase();
+    let candidates = allRecords.filter(r => (r.person || "other") === condition.person && !r.conditionId);
+    if (term) {
+      candidates = candidates.filter(r => [r.title, r.description, (r.tags || []).join(" ")].join(" ").toLowerCase().includes(term));
+    }
+    // 標題含病症名稱的排在最前面，作為建議
+    candidates.sort((a, b) => {
+      const aMatch = deriveConditionKey(a).includes(condition.name) || (a.title || "").includes(condition.name);
+      const bMatch = deriveConditionKey(b).includes(condition.name) || (b.title || "").includes(condition.name);
+      if (aMatch !== bMatch) return aMatch ? -1 : 1;
+      return b.date.localeCompare(a.date);
+    });
+    candidates = candidates.slice(0, 60); // 避免一次渲染過多
+
+    if (!candidates.length) {
+      listEl.innerHTML = `<div class="field-hint" style="padding:8px 4px;">${term ? "沒有符合搜尋的未歸屬紀錄" : "目前沒有尚未歸屬病症的紀錄"}</div>`;
+      return;
+    }
+    listEl.innerHTML = candidates.map(r => {
+      const suggested = deriveConditionKey(r).includes(condition.name) || (r.title || "").includes(condition.name);
+      return `<div class="link-record-row">
+        <input type="checkbox" class="link-record-check" data-id="${r.id}" ${suggested ? "checked" : ""}/>
+        <span class="lr-title">${escapeHtml(r.title || "")}${suggested ? ' <span class="tag-pill" style="background:var(--status-tracking-bg);color:var(--status-tracking);">建議</span>' : ""}</span>
+        <span class="lr-date">${r.date}</span>
+      </div>`;
+    }).join("");
+  }
+
+  draw();
+  searchInput.addEventListener("input", draw);
+
+  $("#link-records-btn").addEventListener("click", async () => {
+    const checked = [...listEl.querySelectorAll(".link-record-check:checked")].map(cb => cb.dataset.id);
+    if (!checked.length) { toast("請先勾選要加入的紀錄"); return; }
+    try {
+      await Promise.all(checked.map(id => updateDoc(doc(db, appConfig.recordsCollection, id), { conditionId: condition.id })));
+      await updateDoc(doc(db, appConfig.conditionsCollection, condition.id), { updatedAt: serverTimestamp() });
+      toast(`已將 ${checked.length} 筆紀錄加入「${condition.name}」`);
+    } catch (err) {
+      console.error(err);
+      toast("加入失敗，請稍後再試");
+    }
+  });
+}
+
+// ---- 病症 person 切換 + 新增按鈕 ----
+$$("#condition-person-toggle button").forEach(b => b.addEventListener("click", () => {
+  $$("#condition-person-toggle button").forEach(x => x.classList.remove("active"));
+  b.classList.add("active");
+  conditionPersonFilter = b.dataset.person;
+  selectedConditionId = null;
+  renderConditionPage();
+}));
+$("#add-condition-btn").addEventListener("click", () => openConditionModal(null));
+
+// ---- 病症新增/編輯 modal ----
+let editingConditionId = null;
+let cfPerson = "mother";
+let cfStatus = "tracking";
+
+function openConditionModal(id) {
+  editingConditionId = id;
+  const c = id ? allConditions.find(x => x.id === id) : null;
+  cfPerson = c ? c.person : conditionPersonFilter;
+  cfStatus = c ? c.status : "tracking";
+  $("#condition-modal-title").textContent = c ? "編輯病症" : "新增病症";
+  $("#condition-delete-btn").style.display = c ? "inline-block" : "none";
+  $("#cf-name").value = c ? c.name : "";
+  $("#cf-summary").value = c ? (c.summary || "") : "";
+  syncCfPersonButtons();
+  syncCfStatusButtons();
+  $("#condition-modal").classList.add("active");
+}
+function closeConditionModal() { $("#condition-modal").classList.remove("active"); }
+function syncCfPersonButtons() { $$("#cf-person button").forEach(b => b.classList.toggle("active", b.dataset.person === cfPerson)); }
+function syncCfStatusButtons() { $$("#cf-status button").forEach(b => b.classList.toggle("active", b.dataset.status === cfStatus)); }
+$$("#cf-person button").forEach(b => b.addEventListener("click", () => { cfPerson = b.dataset.person; syncCfPersonButtons(); }));
+$$("#cf-status button").forEach(b => b.addEventListener("click", () => { cfStatus = b.dataset.status; syncCfStatusButtons(); }));
+$("#condition-modal-close-btn").addEventListener("click", closeConditionModal);
+$("#condition-cancel-btn").addEventListener("click", closeConditionModal);
+
+$("#condition-save-btn").addEventListener("click", async () => {
+  const name = $("#cf-name").value.trim();
+  if (!name) { toast("請輸入病症名稱"); return; }
+  const { text: safeName } = redact(name);
+  const { text: safeSummary, hits } = redact($("#cf-summary").value.trim());
+  const payload = { name: safeName, person: cfPerson, status: cfStatus, summary: safeSummary, updatedAt: serverTimestamp() };
+  try {
+    if (editingConditionId) {
+      await updateDoc(doc(db, appConfig.conditionsCollection, editingConditionId), payload);
+    } else {
+      payload.createdAt = serverTimestamp();
+      const newDoc = await addDoc(collection(db, appConfig.conditionsCollection), payload);
+      selectedConditionId = newDoc.id;
+      conditionPersonFilter = cfPerson;
+    }
+    if (hits > 0) toast(`已儲存（偵測到 ${hits} 處疑似敏感資料已自動遮蔽）`);
+    else toast("已儲存");
+    closeConditionModal();
+    renderConditionPage();
+  } catch (err) {
+    console.error(err);
+    toast("儲存失敗");
+  }
+});
+
+$("#condition-delete-btn").addEventListener("click", async () => {
+  if (!editingConditionId) return;
+  if (!confirm("確定要刪除這個病症嗎？底下連結的紀錄不會被刪除，但會變成不歸屬任何病症。")) return;
+  try {
+    const snap = await getDocs(query(collection(db, appConfig.recordsCollection), where("conditionId", "==", editingConditionId)));
+    await Promise.all(snap.docs.map(d => updateDoc(doc(db, appConfig.recordsCollection, d.id), { conditionId: null })));
+    await deleteDoc(doc(db, appConfig.conditionsCollection, editingConditionId));
+    toast("已刪除病症");
+    closeConditionModal();
+    selectedConditionId = null;
+    renderConditionPage();
+  } catch (err) {
+    console.error(err);
+    toast("刪除失敗");
+  }
+});
+
+// ---- 整理給醫生看 ----
+function openDoctorSummary(conditionId) {
+  const c = allConditions.find(x => x.id === conditionId);
+  if (!c) return;
+  const linked = allRecords.filter(r => r.conditionId === conditionId).sort((a, b) => a.date.localeCompare(b.date));
+  const lines = [];
+  lines.push(`【病症】${c.name}（${PERSON_LABELS[c.person]}）`);
+  lines.push(`【目前狀態】${STATUS_LABELS[c.status] || ""}`);
+  if (c.summary) lines.push(`【整體說明】${c.summary}`);
+  if (linked.length) {
+    lines.push(`【最早紀錄】${linked[0].date}`);
+    lines.push(`【最近一次】${linked[linked.length - 1].date}`);
+    lines.push("");
+    lines.push("【病程時間軸】");
+    linked.forEach(r => {
+      lines.push(`・${r.date}　${r.title}`);
+      if (r.description) lines.push(`　${r.description.replace(/\n/g, " ").slice(0, 200)}`);
+    });
+    const meds = linked.filter(r => r.category === "med");
+    if (meds.length) {
+      lines.push("");
+      lines.push("【曾用藥物】");
+      meds.forEach(r => lines.push(`・${r.date}　${r.title}`));
+    }
+  } else {
+    lines.push("");
+    lines.push("（目前尚無連結的病程紀錄）");
+  }
+  const text = lines.join("\n");
+  $("#doctor-summary-text").textContent = text;
+  $("#doctor-summary-modal").dataset.text = text;
+  $("#doctor-summary-modal").classList.add("active");
+}
+function closeDoctorSummary() { $("#doctor-summary-modal").classList.remove("active"); }
+$("#doctor-summary-close-btn").addEventListener("click", closeDoctorSummary);
+$("#doctor-summary-close-btn2").addEventListener("click", closeDoctorSummary);
+$("#doctor-summary-copy-btn").addEventListener("click", async () => {
+  const text = $("#doctor-summary-modal").dataset.text || "";
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("已複製到剪貼簿");
+  } catch (err) {
+    console.error(err);
+    toast("複製失敗，請手動選取文字複製");
+  }
+});
+
 
 // ============================================================================
 // GPT import
