@@ -27,17 +27,17 @@
   --c-note: #64748B;      /* 其他/備註 */
   --c-note-bg: #EEF1F4;
 
-  /* Family member accents */
+  /* Family member accents — 刻意跟分類/狀態的顏色錯開，避免同色不同義 */
   --c-mother: #FF2D55;
   --c-mother-bg: #FFE5EB;
-  --c-father: #007AFF;
-  --c-father-bg: #E8F2FF;
+  --c-father: #009688;    /* 原本跟「檢查」「追蹤中」同一個藍色，改成青綠色 */
+  --c-father-bg: #E0F5F3;
 
-  /* Status */
-  --status-active: #FF9500;    /* 治療中 */
-  --status-active-bg: #FFF3E1;
-  --status-tracking: #007AFF;  /* 追蹤中 */
-  --status-tracking-bg: #E8F2FF;
+  /* Status — 刻意跟分類的顏色錯開，避免同色不同義 */
+  --status-active: #FFB300;    /* 治療中（原本跟「就診」同一個橘色，改成琥珀金色）*/
+  --status-active-bg: #FFF6DB;
+  --status-tracking: #5856D6;  /* 追蹤中（原本跟「檢查」「爸爸」同一個藍色，改成靛紫色）*/
+  --status-tracking-bg: #ECEBFB;
   --status-done: #34C759;      /* 已完成 */
   --status-done-bg: #E7F9EC;
 
