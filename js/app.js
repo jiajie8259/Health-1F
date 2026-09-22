@@ -205,6 +205,7 @@ function startRecordsListener() {
 let allConditions = [];
 let conditionPersonFilter = "mother";
 let selectedConditionId = null;
+let selectedConditionDate = null; // 病症詳細頁的橫向時間軸目前選取日期，切換病症時要重置
 
 function startConditionsListener() {
   const q = query(collection(db, appConfig.conditionsCollection), orderBy("updatedAt", "desc"));
@@ -275,6 +276,7 @@ function renderConditionSidebar() {
     item.addEventListener("click", () => {
       conditionPersonFilter = item.dataset.person;
       selectedConditionId = item.dataset.id;
+      selectedConditionDate = null;
       setRoute("condition");
     });
   });
@@ -325,23 +327,28 @@ function derivePlace(record) {
 }
 
 function renderTimeline() {
-  const el = $("#timeline-view");
-  const recs = filteredRecords();
-  if (!recs.length) {
+  renderHorizontalTimeline($("#timeline-view"), filteredRecords(), () => selectedTimelineDate, (v) => { selectedTimelineDate = v; }, renderTimeline);
+}
+
+// 可重複使用的橫向時間軸渲染器：時間軸頁、病症詳細頁都用這個。
+// getSelected/setSelected 讓兩處各自維護自己的「目前選取日期」狀態，互不影響。
+function renderHorizontalTimeline(el, records, getSelected, setSelected, rerenderFn) {
+  if (!records.length) {
     el.innerHTML = emptyStateHtml();
     return;
   }
   const groups = {};
-  recs.forEach(r => { (groups[r.date] = groups[r.date] || []).push(r); });
+  records.forEach(r => { (groups[r.date] = groups[r.date] || []).push(r); });
   const dates = Object.keys(groups).sort((a, b) => b.localeCompare(a)); // 最新在左
 
-  if (!selectedTimelineDate || !groups[selectedTimelineDate]) selectedTimelineDate = dates[0];
+  let selected = getSelected();
+  if (!selected || !groups[selected]) { selected = dates[0]; setSelected(selected); }
 
   let lastYear = null;
   const stripHtml = dates.map(date => {
     const items = groups[date];
     const cats = [...new Set(items.map(i => i.category))];
-    const active = date === selectedTimelineDate;
+    const active = date === selected;
     const year = date.slice(0, 4);
     let yearDivider = "";
     if (year !== lastYear) {
@@ -366,23 +373,23 @@ function renderTimeline() {
       </div>`;
   }).join("");
 
-  const detailItems = groups[selectedTimelineDate] || [];
+  const detailItems = groups[selected] || [];
   const summaryHtml = daySummaryHtml(detailItems);
   const detailHtml = `
-    <div class="timeline-date-label">${fmtDateLabel(selectedTimelineDate)}</div>
+    <div class="timeline-date-label">${fmtDateLabel(selected)}</div>
     ${summaryHtml}
     ${detailItems.map(cardHtml).join("")}
   `;
 
   el.innerHTML = `
-    <div class="h-timeline" id="h-timeline">${stripHtml}</div>
+    <div class="h-timeline">${stripHtml}</div>
     <div class="h-timeline-detail">${detailHtml}</div>
   `;
 
   el.querySelectorAll(".h-timeline-marker").forEach(m => {
     m.addEventListener("click", () => {
-      selectedTimelineDate = m.dataset.date;
-      renderTimeline();
+      setSelected(m.dataset.date);
+      rerenderFn();
     });
   });
   const activeMarker = el.querySelector(".h-timeline-marker.active");
@@ -838,7 +845,7 @@ function renderConditionListView() {
       </div>`;
   }).join("")}</div>`;
   listEl.querySelectorAll(".condition-card").forEach(card => {
-    card.addEventListener("click", () => { selectedConditionId = card.dataset.id; renderConditionPage(); });
+    card.addEventListener("click", () => { selectedConditionId = card.dataset.id; selectedConditionDate = null; renderConditionPage(); });
   });
 }
 
@@ -870,7 +877,7 @@ function renderConditionDetailView(id) {
     <div class="condition-summary-box${c.summary ? "" : " empty"}">${c.summary ? escapeHtml(c.summary) : "尚未填寫整體說明，點「編輯病症」補上。"}</div>
 
     <div class="condition-section-title">相關病程時間軸（共 ${linkedRecords.length} 筆）</div>
-    <div id="condition-linked-records">${linkedRecords.length ? linkedRecords.map(cardHtml).join("") : `<div class="empty-state" style="padding:24px;"><p>還沒有連結任何紀錄，可以「＋新增紀錄」或在下方把既有紀錄掛進來</p></div>`}</div>
+    <div id="condition-linked-records">${linkedRecords.length ? "" : `<div class="empty-state" style="padding:24px;"><p>還沒有連結任何紀錄，可以「＋新增紀錄」或在下方把既有紀錄掛進來</p></div>`}</div>
 
     <div class="condition-section-title">掛入既有紀錄</div>
     <div class="link-panel">
@@ -882,9 +889,13 @@ function renderConditionDetailView(id) {
     </div>
   `;
 
-  el.querySelectorAll(".record-card").forEach(card => {
-    card.addEventListener("click", () => openEditModal(card.dataset.id));
-  });
+  if (linkedRecords.length) {
+    renderHorizontalTimeline(
+      $("#condition-linked-records"), linkedRecords,
+      () => selectedConditionDate, (v) => { selectedConditionDate = v; },
+      () => renderConditionDetailView(id)
+    );
+  }
   $("#condition-back-btn").addEventListener("click", () => { selectedConditionId = null; renderConditionPage(); });
   $("#condition-edit-btn").addEventListener("click", () => openConditionModal(id));
   $("#condition-summary-btn").addEventListener("click", () => openDoctorSummary(id));
@@ -993,6 +1004,7 @@ $("#condition-save-btn").addEventListener("click", async () => {
       payload.createdAt = serverTimestamp();
       const newDoc = await addDoc(collection(db, appConfig.conditionsCollection), payload);
       selectedConditionId = newDoc.id;
+      selectedConditionDate = null;
       conditionPersonFilter = cfPerson;
     }
     if (hits > 0) toast(`已儲存（偵測到 ${hits} 處疑似敏感資料已自動遮蔽）`);
