@@ -360,7 +360,7 @@ function renderHorizontalTimeline(el, records, getSelected, setSelected, rerende
     const mainDiag = items.map(i => i.meta && i.meta.mainDiagnosis).find(Boolean);
     const doctor = items.map(i => i.meta && i.meta.doctor).find(Boolean);
     const isRefill = items.some(i => i.meta && i.meta.isRefill);
-    const headline = mainDiag || (places.length ? (places.length > 2 ? `${places.slice(0, 2).join("、")}等` : places.join("、")) : `${items.length}筆`);
+    const headline = (places.length ? (places.length > 2 ? `${places.slice(0, 2).join("、")}等` : places.join("、")) : mainDiag) || `${items.length}筆`;
     const badgeBits = [];
     if (isRefill) badgeBits.push(`<span class="h-badge refill">🔁連續處方</span>`);
     if (doctor) badgeBits.push(`<span class="h-badge doctor">👨‍⚕️${escapeHtml(doctor)}</span>`);
@@ -1433,24 +1433,35 @@ const NHI_LABEL_GLOSSARY = [
   ["Reported by", "報告醫師"], ["Sedation", "鎮靜"], ["Complication", "併發症"]
 ];
 
+// 回傳 { text: 原文（附標題翻譯註記）, translation: 中文參考翻譯區塊, translated, hasResidualEnglish }
+// 呼叫端負責把 translation 放在最上方、text（原文）接在後面 —— 不在這裡直接拼字串，
+// 是因為敏感資料遮蔽 redact() 要分別套用在翻譯區塊跟原文區塊上。
 function translateNhiReportText(text) {
-  if (!text) return { text: "", translated: false, hasResidualEnglish: false };
+  if (!text) return { text: "", translation: "", translated: false, hasResidualEnglish: false };
   let out = text;
   let residualCheck = text;
-  let translated = false;
+  const zhParts = [];
   NHI_REPORT_TRANSLATIONS.forEach(({ en, zh }) => {
-    if (out.includes(en)) {
-      out = out.replace(en, `${en}\n〔中文參考翻譯〕${zh}`);
+    if (text.includes(en)) {
+      zhParts.push(zh);
       residualCheck = residualCheck.split(en).join(""); // 已成功翻譯的段落從殘留英文檢查中移除
-      translated = true;
     }
   });
   NHI_LABEL_GLOSSARY.forEach(([en, zh]) => {
     const re = new RegExp(`\\b${en}\\b\\s*:`, "g");
     out = out.replace(re, `${en}（${zh}）:`);
   });
+  const translated = zhParts.length > 0;
+  const translation = zhParts.join("\n\n");
   const hasResidualEnglish = /[A-Za-z]{4,}/.test(residualCheck);
-  return { text: out, translated, hasResidualEnglish };
+  return { text: out, translation, translated, hasResidualEnglish };
+}
+
+// 把「中文參考翻譯」放最上方、原文接在後面，組成最終要存進 description 的文字。
+// safeTranslation / safeOriginal 都應該是已經 redact() 過的文字。
+function composeTranslatedDescription(safeTranslation, translated, safeOriginal) {
+  if (!translated) return safeOriginal;
+  return `〔中文參考翻譯〕\n${safeTranslation}\n\n──── 原文 ────\n${safeOriginal}`;
 }
 
 function extractDoctorTag(reportText) {
@@ -1553,17 +1564,18 @@ function buildNhiImagingDrafts(doc, person) {
   const clusters = mergeNhiImagingGroups(parseNhiImagingTable(doc));
   return clusters.map(c => {
     const combinedReport = c.reportTexts.join("\n\n");
-    const { text: translatedText, hasResidualEnglish } = translateNhiReportText(combinedReport);
-    const { text: safeDesc, hits } = redact(translatedText);
+    const { text: annotatedText, translation, translated, hasResidualEnglish } = translateNhiReportText(combinedReport);
+    const { text: safeOriginal, hits: hitsOriginal } = redact(annotatedText);
+    const { text: safeTranslation, hits: hitsTranslation } = redact(translation);
     const doctorTag = extractDoctorTag(combinedReport);
     const tags = [c.institution, doctorTag].filter(Boolean);
-    let description = safeDesc;
+    let description = composeTranslatedDescription(safeTranslation, translated, safeOriginal);
     if (c.reportTexts.length > 1) description = `（此檢查在健保資料中有 ${c.reportTexts.length} 段報告內容，已合併呈現）\n\n` + description;
     if (hasResidualEnglish) description = "⚠️ 部分內容為英文原文，系統未能自動對照翻譯，建議自行確認或詢問醫師。\n\n" + description;
     return {
       date: c.date, category: "exam", status: "done", person,
       title: `${c.institution}｜${c.orderName || "檢查報告"}`.slice(0, 36),
-      description, tags, hits, include: true,
+      description, tags, hits: hitsOriginal + hitsTranslation, include: true,
       sourceKey: `nhi:exam:${c.date}:${c.institution}:${c.orderCode || c.orderName}`,
       meta: { doctor: extractDoctorName(combinedReport), mainDiagnosis: null, subDiagnosis: [], orders: [], medications: [], isRefill: false, refillCount: null }
     };
@@ -1982,17 +1994,18 @@ function buildHbImagingDrafts(bdata, person) {
   });
   return Object.values(clusters).map(c => {
     const combinedReport = c.reportTexts.join("\n\n");
-    const { text: translatedText, hasResidualEnglish } = translateNhiReportText(combinedReport);
-    const { text: safeDesc, hits } = redact(translatedText);
+    const { text: annotatedText, translation, translated, hasResidualEnglish } = translateNhiReportText(combinedReport);
+    const { text: safeOriginal, hits: hitsOriginal } = redact(annotatedText);
+    const { text: safeTranslation, hits: hitsTranslation } = redact(translation);
     const doctorTag = extractDoctorTag(combinedReport);
     const tags = [c.institution, doctorTag].filter(Boolean);
-    let description = safeDesc;
+    let description = composeTranslatedDescription(safeTranslation, translated, safeOriginal);
     if (c.reportTexts.length > 1) description = `（此檢查在健保資料中有 ${c.reportTexts.length} 段報告內容，已合併呈現）\n\n` + description;
     if (hasResidualEnglish) description = "⚠️ 部分內容為英文原文，系統未能自動對照翻譯，建議自行確認或詢問醫師。\n\n" + description;
     return {
       date: c.examDate, category: "exam", status: "done", person,
       title: `${c.institution}｜${c.orderName || "檢查報告"}`.slice(0, 36),
-      description, tags, hits, include: true,
+      description, tags, hits: hitsOriginal + hitsTranslation, include: true,
       sourceKey: `nhi:exam:${c.examDate}:${c.institution}:${c.orderCode || c.orderName}`,
       meta: { doctor: extractDoctorName(combinedReport), mainDiagnosis: null, subDiagnosis: [], orders: [], medications: [], isRefill: false, refillCount: null }
     };
