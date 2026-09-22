@@ -492,6 +492,7 @@ button.ghost {
   width: 100%; max-width: 680px; box-shadow: var(--shadow-pop);
   padding: 26px 30px 28px;
 }
+.modal-card-wide { max-width: 1020px; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 .modal-head h2 { font-size: 19px; margin: 0; }
 .modal-close { background: var(--divider-soft); border: none; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; font-size: 15px; color: var(--text-secondary); }
@@ -506,6 +507,21 @@ button.ghost {
 .field-row { display: flex; gap: 12px; }
 .field-row .field { flex: 1; }
 .field-hint { font-size: 11px; color: var(--text-tertiary); margin-top: 5px; }
+
+/* 編輯紀錄視窗：左側窄欄放「家人/分類/日期/時間/狀態/標籤/歸屬病症」等元資料，
+   採最小化呈現（小字、小按鈕）；右側寬欄留給「標題、詳細描述」，是主要視覺重點。 */
+.record-modal-grid { display: grid; grid-template-columns: 208px 1fr; gap: 0 28px; align-items: start; }
+.meta-col .field { margin-bottom: 12px; }
+.meta-col .field label { font-size: 10.5px; margin-bottom: 4px; letter-spacing: 0.02em; }
+.meta-col .cat-select { gap: 6px; }
+.meta-col .cat-select button { padding: 5px 9px; font-size: 11px; }
+.meta-col .status-select { gap: 6px; }
+.meta-col .status-select button { padding: 6px 4px; font-size: 10.5px; }
+.meta-col .field-row { gap: 8px; }
+.meta-col input, .meta-col select { padding: 7px 9px; font-size: 12.5px; }
+.main-col .field label { font-size: 13px; }
+.main-col #f-title { font-size: 18px; font-weight: 700; padding: 12px 14px; }
+.main-col #f-desc { min-height: 360px; font-size: 15px; }
 
 .cat-select { display: flex; gap: 8px; flex-wrap: wrap; }
 .cat-select button {
@@ -593,6 +609,8 @@ button.ghost {
    ========================================================================== */
 .bottom-nav { display: none; }
 @media (max-width: 760px) {
+  .record-modal-grid { grid-template-columns: 1fr; }
+  .main-col #f-desc { min-height: 220px; }
   .sidebar { display: none; }
   .main { padding: 18px 16px 90px; max-width: 100%; }
   .page-title { font-size: 21px; }
