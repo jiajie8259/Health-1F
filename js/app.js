@@ -18,7 +18,7 @@ const db = getFirestore(app);
 // Constants
 // ----------------------------------------------------------------------------
 const CATEGORY_LABELS = { symptom: "症狀", visit: "就診", exam: "檢查", med: "用藥", note: "備註" };
-const SELECTABLE_CATEGORIES = ["symptom", "visit", "exam", "med"]; // 備註已停用，僅保留 CATEGORY_LABELS.note 供舊資料顯示
+const SELECTABLE_CATEGORIES = ["symptom", "visit", "exam"]; // 用藥／備註已停用，僅保留 CATEGORY_LABELS.med/.note 供舊資料顯示
 const CATEGORY_ICONS = { symptom: "🩹", visit: "🏥", exam: "🔬", med: "💊", note: "📝" };
 const STATUS_LABELS = { active: "治療中", tracking: "追蹤中", done: "已完成" };
 const PERSON_LABELS = { mother: "媽媽", father: "爸爸", other: "其他" };
@@ -1398,11 +1398,12 @@ function translateNhiReportText(text) {
   return { text: out, translation, translated, hasResidualEnglish };
 }
 
-// 把「中文參考翻譯」放最上方、原文接在後面，組成最終要存進 description 的文字。
+// 把中文參考翻譯放最上方、原文接在後面，組成最終要存進 description 的文字（不再加註
+// 「〔中文參考翻譯〕」這個標籤文字，只留下「──── 原文 ────」分隔線區分兩段）。
 // safeTranslation / safeOriginal 都應該是已經 redact() 過的文字。
 function composeTranslatedDescription(safeTranslation, translated, safeOriginal) {
   if (!translated) return safeOriginal;
-  return `〔中文參考翻譯〕\n${safeTranslation}\n\n──── 原文 ────\n${safeOriginal}`;
+  return `${safeTranslation}\n\n──── 原文 ────\n${safeOriginal}`;
 }
 
 function extractDoctorTag(reportText) {
@@ -1694,7 +1695,7 @@ function buildHbVisitDrafts(bdata, person) {
     if (drugLines.length) parts.push(`【用藥】\n` + drugLines.join("\n"));
     const description = parts.join("\n\n");
     const { text: safeDesc, hits } = redact(description);
-    const category = drugList.length && !orders.length && !c.mainDiagName ? "med" : "visit";
+    const category = "visit"; // 「用藥」分類已停用，純領藥紀錄併入「就診」
     return {
       date: c.date, category, status: "done", person,
       title: `${c.institution}｜${c.mainDiagName || "門診"}`.slice(0, 36),
@@ -1805,7 +1806,7 @@ function buildHbVaccineDrafts(bdata, person) {
     const description = `【疫苗】${vaccineName}\n【接種機構】${institution}`;
     const { text: safeDesc, hits } = redact(description);
     return {
-      date: date || todayStr(), category: "med", status: "done", person,
+      date: date || todayStr(), category: "visit", status: "done", person,
       title: `疫苗接種：${vaccineName}`.slice(0, 36),
       description: safeDesc, tags: [institution].filter(Boolean), hits, include: true,
       sourceKey: `nhi:vaccine:${date}:${vaccineName}`
