@@ -345,6 +345,48 @@ function derivePlace(record) {
   return null;
 }
 
+// 主診斷常用語簡化表：健保申報用的診斷全名（含分型、修飾語）對一般人來說太長太專業，
+// 時間軸方塊空間有限，這裡把常見慢性病／健檢類別對照成一般人熟悉的簡稱。
+// 依序比對，符合就直接回傳對應常用語；比對不到才進入下面的「去除冗詞」規則。
+const DIAGNOSIS_SIMPLIFY_MAP = [
+  { test: (s) => s.includes("腫瘤") && s.includes("篩檢"), label: "腫瘤篩檢" },
+  { test: (s) => s.includes("流行性感冒") || s.includes("流感"), label: "流行性感冒" },
+  { test: (s) => s.includes("骨質疏鬆"), label: "骨質疏鬆" },
+  { test: (s) => s.includes("高血壓"), label: "高血壓" },
+  { test: (s) => s.includes("糖尿病"), label: "糖尿病" },
+  { test: (s) => s.includes("高血脂") || s.includes("血脂異常") || s.includes("高脂血症"), label: "高血脂" },
+  { test: (s) => s.includes("痔"), label: "痔瘡" },
+  { test: (s) => s.includes("白內障"), label: "白內障" },
+  { test: (s) => s.includes("大腸鏡") || s.includes("結腸鏡"), label: "大腸鏡檢查" },
+  { test: (s) => s.includes("肺炎"), label: "肺炎" },
+  { test: (s) => s.includes("氣喘"), label: "氣喘" },
+  { test: (s) => s.includes("退化性") && s.includes("關節"), label: "退化性關節炎" },
+  { test: (s) => s.includes("腎功能不全") || s.includes("慢性腎臟病"), label: "腎臟病" },
+  { test: (s) => s.includes("心律不整"), label: "心律不整" },
+  { test: (s) => s.includes("攝護腺") || s.includes("前列腺"), label: "攝護腺疾病" },
+  { test: (s) => s.includes("胃食道逆流"), label: "胃食道逆流" },
+];
+function simplifyDiagnosis(raw) {
+  if (!raw) return raw;
+  const hit = DIAGNOSIS_SIMPLIFY_MAP.find(r => r.test(raw));
+  if (hit) return hit.label;
+  // 對照表找不到時，退而求其次：去掉常見的開頭動詞、括號附註、後半段修飾語，
+  // 讓字串至少精簡一點，而不是整句健保診斷全名塞進小方塊裡。
+  let s = raw
+    .replace(/^來院接受/, "")
+    .replace(/^確認|^確診/, "")
+    .replace(/[（(][^）)]*[）)]/g, "") // 移除括號附註，例如「(原發性)」
+    .replace(/未伴有.*$/, "")
+    .replace(/併其他表徵.*$/, "")
+    .replace(/併發.*$/, "")
+    .replace(/合併.*$/, "")
+    .replace(/之篩檢$/, "篩檢")
+    .replace(/之$/, "")
+    .trim();
+  if (!s) s = raw;
+  return s.length > 10 ? s.slice(0, 10) + "…" : s;
+}
+
 function renderTimeline() {
   renderHorizontalTimeline($("#timeline-view"), filteredRecords(), () => selectedTimelineDate, (v) => { selectedTimelineDate = v; }, renderTimeline);
 }
@@ -379,7 +421,10 @@ function renderHorizontalTimeline(el, records, getSelected, setSelected, rerende
     const mainDiag = items.map(i => i.meta && i.meta.mainDiagnosis).find(Boolean);
     const doctor = items.map(i => i.meta && i.meta.doctor).find(Boolean);
     const isRefill = items.some(i => i.meta && i.meta.isRefill);
-    const headline = (places.length ? (places.length > 2 ? `${places.slice(0, 2).join("、")}等` : places.join("、")) : mainDiag) || `${items.length}筆`;
+    const institutionText = places.length ? (places.length > 2 ? `${places.slice(0, 2).join("、")}等` : places.join("、")) : "";
+    const diagText = mainDiag ? simplifyDiagnosis(mainDiag) : "";
+    const fallbackText = (!institutionText && !diagText) ? `${items.length}筆` : "";
+    const placeTitle = [institutionText, diagText].filter(Boolean).join(" ｜ ") || fallbackText;
     const badgeBits = [];
     if (isRefill) badgeBits.push(`<span class="h-badge refill">🔁連續處方</span>`);
     if (doctor) badgeBits.push(`<span class="h-badge doctor">👨‍⚕️${escapeHtml(doctor)}</span>`);
@@ -387,7 +432,10 @@ function renderHorizontalTimeline(el, records, getSelected, setSelected, rerende
       <div class="h-timeline-marker ${active ? "active" : ""}" data-date="${date}">
         <div class="date-label">${fmtShortDate(date)}</div>
         <div class="h-dots">${cats.slice(0, 4).map(c => `<span class="dot" style="background:var(--c-${c})"></span>`).join("")}</div>
-        <div class="h-place" title="${escapeHtml(headline)}">${escapeHtml(headline)}</div>
+        <div class="h-place" title="${escapeHtml(placeTitle)}">
+          ${institutionText ? `<div class="h-place-inst">${escapeHtml(institutionText)}</div>` : ""}
+          ${diagText ? `<div class="h-place-diag">${escapeHtml(diagText)}</div>` : (fallbackText ? `<div class="h-place-diag">${escapeHtml(fallbackText)}</div>` : "")}
+        </div>
         ${badgeBits.length ? `<div class="h-badges">${badgeBits.join("")}</div>` : ""}
       </div>`;
   }).join("");
