@@ -1102,6 +1102,25 @@ $("#condition-delete-btn").addEventListener("click", async () => {
 });
 
 // ---- 整理給醫生看 ----
+// 「整理給醫生看」的摘要是給人快速看病程用的，健保匯入時附加的系統提示
+// （英文殘留警語、多段報告合併提示）對醫生來說是雜訊，這裡把它們濾掉再組摘要文字。
+function stripImportNotices(text) {
+  if (!text) return text;
+  let s = text;
+  const patterns = [
+    /^⚠️\s*部分內容為英文原文，系統未能自動對照翻譯，建議自行確認或詢問醫師。\s*\n+/,
+    /^（此檢查在健保資料中有\s*\d+\s*段報告內容，已合併呈現）\s*\n+/
+  ];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const p of patterns) {
+      if (p.test(s)) { s = s.replace(p, ""); changed = true; }
+    }
+  }
+  return s;
+}
+
 function openDoctorSummary(conditionId) {
   const c = allConditions.find(x => x.id === conditionId);
   if (!c) return;
@@ -1115,9 +1134,10 @@ function openDoctorSummary(conditionId) {
     lines.push(`【最近一次】${linked[linked.length - 1].date}`);
     lines.push("");
     lines.push("【病程時間軸】");
-    linked.forEach(r => {
+    linked.forEach((r, i) => {
+      if (i > 0) lines.push(""); // 每次病程日期之間空一行，避免整段文字連在一起
       lines.push(`・${r.date}　${r.title}`);
-      if (r.description) lines.push(`　${r.description.replace(/\n/g, " ").slice(0, 200)}`);
+      if (r.description) lines.push(`　${stripImportNotices(r.description).replace(/\n/g, " ").slice(0, 200)}`);
     });
     const meds = linked.filter(r => r.category === "med");
     if (meds.length) {
