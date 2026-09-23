@@ -304,7 +304,6 @@ button.ghost {
 .chip[data-cat="symptom"].active { background: var(--c-symptom); }
 .chip[data-cat="visit"].active { background: var(--c-visit); }
 .chip[data-cat="exam"].active { background: var(--c-exam); }
-.chip[data-cat="med"].active { background: var(--c-med); }
 .chip[data-cat="note"].active { background: var(--c-note); }
 .chip[data-status].active { background: var(--text-primary); }
 .chip[data-person="mother"].active { background: var(--c-mother); }
@@ -538,7 +537,6 @@ button.ghost {
 .cat-select button[data-cat="symptom"].active { background: var(--c-symptom); }
 .cat-select button[data-cat="visit"].active { background: var(--c-visit); }
 .cat-select button[data-cat="exam"].active { background: var(--c-exam); }
-.cat-select button[data-cat="med"].active { background: var(--c-med); }
 .cat-select button[data-cat="note"].active { background: var(--c-note); }
 .cat-select button[data-person="mother"].active { background: var(--c-mother); }
 .cat-select button[data-person="father"].active { background: var(--c-father); }
