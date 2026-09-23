@@ -1362,6 +1362,17 @@ const NHI_LABEL_GLOSSARY = [
   ["Reported by", "報告醫師"], ["Sedation", "鎮靜"], ["Complication", "併發症"]
 ];
 
+// 把「1. ... 2. ... 3. ...」這種列點式的報告內容，在每個項次前面加上換行，
+// 逐項分行閱讀起來比較整齊，而不是擠成一整段。用零寬負向後顧排除「字母/數字＋數字」
+// 這種編號（例如脊椎位置 T11、L4、0.4cm 的小數點）被誤判成列點項次。
+function breakNumberedItems(text) {
+  if (!text) return text;
+  return text
+    .replace(/(?<![A-Za-z0-9])([1-9]\d?)\.\s*(?=[A-Za-z\u4e00-\u9fff])/g, "\n$1. ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\n+/, "");
+}
+
 // 回傳 { text: 原文（附標題翻譯註記）, translation: 中文參考翻譯區塊, translated, hasResidualEnglish }
 // 呼叫端負責把 translation 放在最上方、text（原文）接在後面 —— 不在這裡直接拼字串，
 // 是因為敏感資料遮蔽 redact() 要分別套用在翻譯區塊跟原文區塊上。
@@ -1381,7 +1392,8 @@ function translateNhiReportText(text) {
     out = out.replace(re, `${en}（${zh}）:`);
   });
   const translated = zhParts.length > 0;
-  const translation = zhParts.join("\n\n");
+  const translation = breakNumberedItems(zhParts.join("\n\n"));
+  out = breakNumberedItems(out);
   const hasResidualEnglish = /[A-Za-z]{4,}/.test(residualCheck);
   return { text: out, translation, translated, hasResidualEnglish };
 }
