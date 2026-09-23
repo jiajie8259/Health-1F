@@ -335,9 +335,14 @@ button.ghost {
 .h-timeline-marker .date-label { font-size: 15px; font-weight: 800; color: var(--text-secondary); white-space: nowrap; }
 .h-timeline-marker .h-dots { display: flex; gap: 4px; justify-content: center; margin-top: 7px; }
 .h-timeline-marker .h-dots .dot { width: 8px; height: 8px; border-radius: 50%; }
-.h-timeline-marker .h-place {
-  font-size: 12.5px; font-weight: 600; color: var(--text-primary); margin-top: 6px;
-  line-height: 1.35; max-height: 2.7em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+.h-timeline-marker .h-place { margin-top: 6px; }
+.h-timeline-marker .h-place-inst {
+  font-size: 11px; font-weight: 600; color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.h-timeline-marker .h-place-diag {
+  font-size: 12.5px; font-weight: 700; color: var(--text-primary); margin-top: 2px;
+  line-height: 1.3; max-height: 2.6em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   word-break: break-word;
 }
 .h-timeline-marker .h-badges { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
