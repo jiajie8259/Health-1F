@@ -209,6 +209,20 @@
             <button class="primary" id="parse-btn">解析對話</button>
             <button class="secondary" id="clear-import-btn">清除輸入內容</button>
           </div>
+          <div id="gpt-conv-picker" class="conv-picker" style="display:none">
+            <h4>選擇要匯入的對話</h4>
+            <p class="desc" id="gpt-conv-desc"></p>
+            <div class="conv-toolbar">
+              <input type="text" id="gpt-conv-search" placeholder="用標題關鍵字篩選，例如：爸爸、血壓" />
+              <select id="gpt-conv-person" title="這批對話屬於"></select>
+            </div>
+            <div class="conv-list" id="gpt-conv-list"></div>
+            <div style="margin-top:10px; display:flex; gap:10px;">
+              <button class="primary" id="gpt-conv-build-btn">產生候選紀錄</button>
+              <button class="secondary" id="gpt-conv-all-btn">全選 / 全不選（目前顯示的）</button>
+            </div>
+            <div class="field-hint">每一組「提問＋AI 回覆」會各自成為一張候選卡片，AI 回覆完整保留；下一步可逐張勾選。重複匯入時，已存在的段落會自動略過。</div>
+          </div>
           <div class="privacy-note">⚠️ 系統會自動偵測並遮蔽疑似身分證字號 / 電話號碼等格式，但仍請在儲存前逐筆確認內容，避免記錄不必要的敏感資料。</div>
 
           <div class="danger-zone">
