@@ -1197,51 +1197,146 @@ function guessDate(text, fallbackDate) {
   return fallbackDate || todayStr();
 }
 
-// Flatten a ChatGPT conversations.json export (mapping tree) into ordered messages
-function flattenChatGptExport(json) {
-  const conversations = Array.isArray(json) ? json : [json];
-  const messages = [];
-  conversations.forEach(conv => {
-    const mapping = conv.mapping;
-    if (!mapping) return;
-    Object.values(mapping).forEach(node => {
-      const msg = node.message;
-      if (!msg || !msg.content || !msg.content.parts) return;
-      const text = msg.content.parts.filter(p => typeof p === "string").join("\n").trim();
-      if (!text) return;
-      const role = msg.author && msg.author.role;
-      if (role !== "user" && role !== "assistant") return;
-      const ts = msg.create_time ? new Date(msg.create_time * 1000) : null;
-      messages.push({ role, text, date: ts ? ts.toISOString().slice(0, 10) : null });
-    });
-  });
-  return messages;
+// ---- ChatGPT conversations.json：先解析成「對話清單」，讓使用者勾選要匯入哪些對話 ----
+function localDateStr(ts) {
+  const d = new Date(ts * 1000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function localTimeStr(ts) {
+  const d = new Date(ts * 1000);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+function hasHealthKeyword(text) {
+  return Object.keys(KEYWORDS).some(cat => KEYWORDS[cat].some(kw => text.includes(kw)));
 }
 
-function buildDraftsFromMessages(messages) {
-  let fallbackDate = messages.find(m => m.date)?.date || todayStr();
-  const drafts = [];
-  messages.forEach((m, idx) => {
-    if (m.role !== "user") return;
-    const hitCategory = Object.keys(KEYWORDS).some(cat => KEYWORDS[cat].some(kw => m.text.includes(kw)));
-    if (!hitCategory) return;
-    const date = m.date || guessDate(m.text, fallbackDate);
-    if (m.date) fallbackDate = m.date;
-    const category = guessCategory(m.text);
-    const reply = messages[idx + 1] && messages[idx + 1].role === "assistant" ? messages[idx + 1].text : "";
-    const fullText = reply ? `${m.text}\n\n（AI 回覆參考）\n${reply}` : m.text;
-    const { text: safeText, hits } = redact(fullText);
-    drafts.push({
-      date, category, status: "tracking", person: "other",
-      title: m.text.slice(0, 24).replace(/\n/g, " "),
-      description: safeText,
-      tags: [],
-      hits,
-      include: true
+// 回傳 [{ id, title, firstTs, lastTs, exchanges: [{ id, ts, question, replies[] }], hitCount }]
+// 沿著 current_node 往上走，只取使用者實際看到的那條對話線（排除「重新產生回答」「編輯提問」留下的舊分支），
+// 避免同一個問題因為被重新產生而重複匯入。一個「問答」= 一次提問 + 緊接著的所有 AI 回覆。
+function extractChatGptConversations(json) {
+  const list = Array.isArray(json) ? json : [json];
+  const out = [];
+  list.forEach((conv, ci) => {
+    if (!conv || !conv.mapping) return;
+    const mapping = conv.mapping;
+    let nodes = [];
+    if (conv.current_node && mapping[conv.current_node]) {
+      let id = conv.current_node;
+      const seen = new Set();
+      while (id && mapping[id] && !seen.has(id)) { seen.add(id); nodes.push(mapping[id]); id = mapping[id].parent; }
+      nodes.reverse();
+    } else {
+      nodes = Object.values(mapping).filter(n => n.message).sort((a, b) => (a.message.create_time || 0) - (b.message.create_time || 0));
+    }
+    const fallbackTs = conv.create_time || conv.update_time || null;
+    const exchanges = [];
+    nodes.forEach(node => {
+      const msg = node.message;
+      if (!msg || !msg.content || !Array.isArray(msg.content.parts)) return;
+      if (msg.metadata && msg.metadata.is_visually_hidden_from_conversation) return;
+      const role = msg.author && msg.author.role;
+      if (role !== "user" && role !== "assistant") return;
+      const text = msg.content.parts.filter(p => typeof p === "string").join("\n").trim();
+      if (!text) return;
+      if (role === "user") {
+        exchanges.push({ id: msg.id || node.id, ts: msg.create_time || fallbackTs, question: text, replies: [] });
+      } else if (exchanges.length) {
+        exchanges[exchanges.length - 1].replies.push(text);
+      }
+    });
+    if (!exchanges.length) return;
+    const tsList = exchanges.map(e => e.ts).filter(Boolean);
+    out.push({
+      id: conv.conversation_id || conv.id || `conv${ci}`,
+      title: (conv.title || "").trim() || "（未命名對話）",
+      firstTs: tsList.length ? Math.min(...tsList) : null,
+      lastTs: tsList.length ? Math.max(...tsList) : null,
+      exchanges,
+      hitCount: exchanges.filter(e => hasHealthKeyword(e.question)).length
     });
   });
+  out.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
+  return out;
+}
+
+let gptConversations = [];
+const gptSelectedConvIds = new Set();
+
+function openConversationPicker(convs) {
+  gptConversations = convs;
+  gptSelectedConvIds.clear();
+  draftEntries = [];
+  $("#import-summary").style.display = "none";
+  $("#gpt-conv-search").value = "";
+  $("#gpt-conv-person").innerHTML = SELECTABLE_PERSONS.map(p => `<option value="${p}">${PERSON_LABELS[p]}</option>`).join("");
+  $("#gpt-conv-picker").style.display = "block";
+  renderConversationList();
+}
+
+function convDateRange(c) {
+  if (!c.firstTs) return "日期不明";
+  const a = localDateStr(c.firstTs), b = localDateStr(c.lastTs);
+  return a === b ? a : `${a} ～ ${b}`;
+}
+
+function visibleConversations() {
+  const q = $("#gpt-conv-search").value.trim().toLowerCase();
+  return q ? gptConversations.filter(c => c.title.toLowerCase().includes(q)) : gptConversations;
+}
+
+function renderConversationList() {
+  const shown = visibleConversations();
+  $("#gpt-conv-desc").textContent = `共 ${gptConversations.length} 個對話，目前顯示 ${shown.length} 個，已勾選 ${gptSelectedConvIds.size} 個。請依標題與日期區間勾選要匯入的對話（排序：最近有對話的在上）。`;
+  $("#gpt-conv-list").innerHTML = shown.length ? shown.map(c => `
+    <label class="conv-row">
+      <input type="checkbox" class="conv-check" data-id="${escapeHtml(c.id)}" ${gptSelectedConvIds.has(c.id) ? "checked" : ""}/>
+      <div class="conv-main">
+        <div class="conv-title">${escapeHtml(c.title)}</div>
+        <div class="conv-meta">${convDateRange(c)} ｜ ${c.exchanges.length} 組問答 ｜ 含健康關鍵字 ${c.hitCount} 組</div>
+      </div>
+    </label>`).join("") : `<div class="conv-empty">沒有符合的對話</div>`;
+  $("#gpt-conv-list").querySelectorAll(".conv-check").forEach(cb => cb.addEventListener("change", () => {
+    if (cb.checked) gptSelectedConvIds.add(cb.dataset.id); else gptSelectedConvIds.delete(cb.dataset.id);
+    $("#gpt-conv-desc").textContent = `共 ${gptConversations.length} 個對話，目前顯示 ${visibleConversations().length} 個，已勾選 ${gptSelectedConvIds.size} 個。請依標題與日期區間勾選要匯入的對話（排序：最近有對話的在上）。`;
+  }));
+}
+
+$("#gpt-conv-search").addEventListener("input", renderConversationList);
+$("#gpt-conv-all-btn").addEventListener("click", () => {
+  const shown = visibleConversations();
+  const allOn = shown.every(c => gptSelectedConvIds.has(c.id));
+  shown.forEach(c => { if (allOn) gptSelectedConvIds.delete(c.id); else gptSelectedConvIds.add(c.id); });
+  renderConversationList();
+});
+
+// 每一組問答 → 一張候選卡片；AI 回覆完整保留。sourceKey 用「對話 ID + 提問訊息 ID」，重複匯入時可辨識。
+function buildDraftsFromConversations(convs, person) {
+  const drafts = [];
+  convs.forEach(conv => conv.exchanges.forEach(ex => {
+    const fullText = ex.replies.length ? `${ex.question}\n\n（AI 回覆參考）\n${ex.replies.join("\n\n")}` : ex.question;
+    const { text: safeText, hits } = redact(fullText);
+    const { text: safeTitle } = redact(ex.question.slice(0, 24).replace(/\n/g, " "));
+    drafts.push({
+      date: ex.ts ? localDateStr(ex.ts) : todayStr(), time: ex.ts ? localTimeStr(ex.ts) : "",
+      category: guessCategory(ex.question), status: "tracking", person,
+      title: safeTitle, description: safeText, tags: [], hits, include: true,
+      source: "gpt-import", sourceKey: `gpt:${conv.id}:${ex.id}`, convTitle: conv.title
+    });
+  }));
+  drafts.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
   return drafts;
 }
+
+$("#gpt-conv-build-btn").addEventListener("click", async () => {
+  const chosen = gptConversations.filter(c => gptSelectedConvIds.has(c.id));
+  if (!chosen.length) { toast("請先勾選至少一個對話"); return; }
+  const drafts = buildDraftsFromConversations(chosen, $("#gpt-conv-person").value);
+  const existingKeys = await fetchExistingGptSourceKeys();
+  drafts.forEach(d => { if (existingKeys.has(d.sourceKey)) { d.duplicate = true; d.include = false; } });
+  draftEntries = drafts;
+  renderDraftList();
+  $("#import-summary").scrollIntoView({ behavior: "smooth", block: "start" });
+});
 
 function buildDraftsFromPlainText(text) {
   const blocks = text.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
@@ -1466,6 +1561,7 @@ function renderDraftList() {
           ${d.hits ? '<span class="tag-pill" style="background:#FFE8CC;color:#7A4A00;">⚠ 已遮蔽敏感資料</span>' : ""}
         </span>
       </div>
+      ${d.convTitle ? `<div class="field-hint" style="margin:0 0 8px;">來自對話：${escapeHtml(d.convTitle)}</div>` : ""}
       <div class="draft-fields">
         <select class="draft-person" data-i="${i}">
           ${SELECTABLE_PERSONS.map(p => `<option value="${p}" ${p === (d.person || "mother") ? "selected" : ""}>${PERSON_LABELS[p]}</option>`).join("")}
@@ -1504,6 +1600,7 @@ function renderDraftList() {
 }
 
 $("#parse-btn").addEventListener("click", () => {
+  $("#gpt-conv-picker").style.display = "none";
   const raw = $("#import-textarea").value.trim().replace(/^\uFEFF/, "");
   if (!raw) { toast("請先貼上或上傳對話內容"); return; }
   try {
@@ -1511,11 +1608,10 @@ $("#parse-btn").addEventListener("click", () => {
     if (looksLikeStructuredHealthJson(json)) {
       draftEntries = buildDraftsFromStructuredJson(json);
     } else {
-      const messages = flattenChatGptExport(json);
-      draftEntries = buildDraftsFromMessages(messages);
-      if (!draftEntries.length && !messages.length) {
-        toast("這個 JSON 不是 ChatGPT 匯出格式，也不是家人健康 JSON 格式，請確認檔案內容");
-      }
+      const convs = extractChatGptConversations(json);
+      if (convs.length) { openConversationPicker(convs); return; }
+      draftEntries = [];
+      toast("這個 JSON 不是 ChatGPT 匯出格式，也不是家人健康 JSON 格式，請確認檔案內容");
     }
   } catch {
     draftEntries = buildDraftsFromPlainText(raw);
@@ -1524,6 +1620,9 @@ $("#parse-btn").addEventListener("click", () => {
 });
 
 $("#clear-import-btn").addEventListener("click", () => {
+  $("#gpt-conv-picker").style.display = "none";
+  gptConversations = [];
+  gptSelectedConvIds.clear();
   $("#import-textarea").value = "";
   draftEntries = [];
   $("#import-summary").style.display = "none";
@@ -1542,9 +1641,9 @@ $("#save-drafts-btn").addEventListener("click", async () => {
   for (const d of toSave) {
     try {
       const payload = {
-        date: d.date, time: "", title: d.title, description: d.description,
+        date: d.date, time: d.time || "", title: d.title, description: d.description,
         tags: d.tags || [], category: d.category, status: d.status, person: d.person || "other",
-        attachmentCount: 0, source: d.sourceKey ? "nhi-import" : "gpt-import", createdBy: currentUser(),
+        attachmentCount: 0, source: d.source || (d.sourceKey ? "nhi-import" : "gpt-import"), createdBy: currentUser(),
         createdAt: serverTimestamp(), updatedAt: serverTimestamp()
       };
       if (d.sourceKey) payload.sourceKey = d.sourceKey;
@@ -1587,6 +1686,16 @@ function readFileAsText(file) {
     reader.onerror = reject;
     reader.readAsText(file);
   });
+}
+
+async function fetchExistingGptSourceKeys() {
+  try {
+    const snap = await getDocs(query(collection(db, appConfig.recordsCollection), where("source", "==", "gpt-import")));
+    return new Set(snap.docs.map(d => d.data().sourceKey).filter(Boolean));
+  } catch (err) {
+    console.error(err);
+    return new Set();
+  }
 }
 
 async function fetchExistingNhiSourceKeys() {
