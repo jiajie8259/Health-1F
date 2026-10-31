@@ -639,3 +639,17 @@ button.ghost {
   .bottom-nav .nav-item.active { background: none; color: var(--text-primary); }
   .bottom-nav .nav-item svg { width: 21px; height: 21px; }
 }
+
+/* GPT 匯入：對話挑選清單 */
+.conv-picker { margin-top: 16px; padding: 16px; border: 1px solid var(--divider); border-radius: var(--radius-md); background: var(--bg); }
+.conv-picker h4 { margin: 0 0 4px; font-size: 15px; }
+.conv-toolbar { display: flex; gap: 10px; margin: 10px 0; }
+.conv-toolbar input { flex: 1; padding: 9px 12px; border-radius: var(--radius-sm); border: 1px solid var(--divider); background: var(--bg-elevated); font-size: 14px; }
+.conv-toolbar select { padding: 9px 10px; border-radius: var(--radius-sm); border: 1px solid var(--divider); background: var(--bg-elevated); font-size: 14px; }
+.conv-list { max-height: 340px; overflow-y: auto; border: 1px solid var(--divider); border-radius: var(--radius-sm); background: var(--bg-elevated); }
+.conv-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-bottom: 1px solid var(--divider-soft); cursor: pointer; }
+.conv-row:last-child { border-bottom: none; }
+.conv-row input { margin-top: 4px; }
+.conv-title { font-size: 14px; font-weight: 700; word-break: break-word; }
+.conv-meta { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
+.conv-empty { padding: 18px; text-align: center; font-size: 13px; color: var(--text-tertiary); }
